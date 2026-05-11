@@ -1,0 +1,111 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "format:WRAR-.YYYY.-.#####",
+ "creation": "2026-05-11 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "enabled",
+  "whatsapp_account",
+  "raven_workspace",
+  "inbox_channel",
+  "inbox_channel_name",
+  "channel_type",
+  "conversation_strategy",
+  "allow_unassigned_reply",
+  "members",
+  "notes"
+ ],
+ "fields": [
+  {
+   "default": "1",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "label": "Enabled"
+  },
+  {
+   "fieldname": "whatsapp_account",
+   "fieldtype": "Link",
+   "label": "WhatsApp Account",
+   "options": "WhatsApp Account",
+   "reqd": 1
+  },
+  {
+   "fieldname": "raven_workspace",
+   "fieldtype": "Link",
+   "label": "Raven Workspace",
+   "options": "Raven Workspace",
+   "reqd": 1
+  },
+  {
+   "fieldname": "inbox_channel",
+   "fieldtype": "Link",
+   "label": "Inbox Channel",
+   "options": "Raven Channel"
+  },
+  {
+   "fieldname": "inbox_channel_name",
+   "fieldtype": "Data",
+   "label": "Inbox Channel Name"
+  },
+  {
+   "default": "Private",
+   "fieldname": "channel_type",
+   "fieldtype": "Select",
+   "label": "Channel Type",
+   "options": "Private\nPublic\nOpen"
+  },
+  {
+   "default": "Thread Per Contact",
+   "fieldname": "conversation_strategy",
+   "fieldtype": "Select",
+   "label": "Conversation Strategy",
+   "options": "Thread Per Contact\nChannel Per Contact"
+  },
+  {
+   "default": "0",
+   "fieldname": "allow_unassigned_reply",
+   "fieldtype": "Check",
+   "label": "Allow Unassigned Reply"
+  },
+  {
+   "fieldname": "members",
+   "fieldtype": "Table",
+   "label": "Members",
+   "options": "WhatsApp Raven Account Route Member"
+  },
+  {
+   "fieldname": "notes",
+   "fieldtype": "Small Text",
+   "label": "Notes"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-05-11 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "WhatsApp Raven Bridge",
+ "name": "WhatsApp Raven Account Route",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "search_fields": "whatsapp_account, inbox_channel, inbox_channel_name, raven_workspace",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "whatsapp_account",
+ "track_changes": 1
+}

@@ -1,0 +1,109 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "format:WRML-.YYYY.-.#####",
+ "creation": "2026-05-10 19:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "conversation",
+  "direction",
+  "whatsapp_message",
+  "whatsapp_message_id",
+  "raven_message",
+  "raven_channel",
+  "content_type",
+  "sync_status",
+  "error",
+  "metadata"
+ ],
+ "fields": [
+  {
+   "fieldname": "conversation",
+   "fieldtype": "Link",
+   "label": "Conversation",
+   "options": "WhatsApp Raven Conversation",
+   "reqd": 1
+  },
+  {
+   "fieldname": "direction",
+   "fieldtype": "Select",
+   "label": "Direction",
+   "options": "Incoming\nOutgoing\nTemplate Start\nIgnored",
+   "reqd": 1
+  },
+  {
+   "fieldname": "whatsapp_message",
+   "fieldtype": "Link",
+   "label": "WhatsApp Message",
+   "options": "WhatsApp Message"
+  },
+  {
+   "description": "Meta WhatsApp message ID.",
+   "fieldname": "whatsapp_message_id",
+   "fieldtype": "Data",
+   "label": "WhatsApp Message ID"
+  },
+  {
+   "fieldname": "raven_message",
+   "fieldtype": "Link",
+   "label": "Raven Message",
+   "options": "Raven Message"
+  },
+  {
+   "fieldname": "raven_channel",
+   "fieldtype": "Link",
+   "label": "Raven Channel",
+   "options": "Raven Channel"
+  },
+  {
+   "fieldname": "content_type",
+   "fieldtype": "Data",
+   "label": "Content Type"
+  },
+  {
+   "default": "Synced",
+   "fieldname": "sync_status",
+   "fieldtype": "Select",
+   "label": "Sync Status",
+   "options": "Pending\nSynced\nFailed\nIgnored"
+  },
+  {
+   "fieldname": "error",
+   "fieldtype": "Small Text",
+   "label": "Error"
+  },
+  {
+   "fieldname": "metadata",
+   "fieldtype": "JSON",
+   "label": "Metadata"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "istable": 0,
+ "links": [],
+ "modified": "2026-05-10 19:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "WhatsApp Raven Bridge",
+ "name": "WhatsApp Raven Message Link",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "search_fields": "whatsapp_message_id, whatsapp_message, raven_message, conversation",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

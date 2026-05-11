@@ -140,6 +140,15 @@ app_license = "mit"
 # 	}
 # }
 
+doc_events = {
+	"WhatsApp Message": {
+		"after_insert": "whatsapp_raven_bridge.bridge.inbound.handle_whatsapp_message_after_insert",
+	},
+	"Raven Message": {
+		"after_insert": "whatsapp_raven_bridge.bridge.outbound.handle_raven_message_after_insert",
+	},
+}
+
 # Scheduled Tasks
 # ---------------
 
@@ -252,4 +261,3 @@ require_type_annotated_api_methods = True
 # ------------
 # List of apps whose translatable strings should be excluded from this app's translations.
 # ignore_translatable_strings_from = []
-

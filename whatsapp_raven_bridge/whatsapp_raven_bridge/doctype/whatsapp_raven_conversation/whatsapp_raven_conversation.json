@@ -1,0 +1,185 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "format:WRC-.YYYY.-.#####",
+ "creation": "2026-05-10 19:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "enabled",
+  "whatsapp_account",
+  "account_route",
+  "phone_number",
+  "display_name",
+  "profile_name",
+  "whatsapp_profile",
+  "contact",
+  "raven_workspace",
+  "raven_channel",
+  "parent_raven_message",
+  "conversation_strategy",
+  "status",
+  "assigned_to",
+  "last_inbound_at",
+  "last_outbound_at",
+  "last_inbound_whatsapp_message",
+  "last_outbound_whatsapp_message",
+  "last_whatsapp_message_id",
+  "last_raven_message",
+  "notes"
+ ],
+ "fields": [
+  {
+   "default": "1",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "label": "Enabled"
+  },
+  {
+   "fieldname": "whatsapp_account",
+   "fieldtype": "Link",
+   "label": "WhatsApp Account",
+   "options": "WhatsApp Account"
+  },
+  {
+   "fieldname": "account_route",
+   "fieldtype": "Link",
+   "label": "Account Route",
+   "options": "WhatsApp Raven Account Route"
+  },
+  {
+   "description": "Normalized WhatsApp phone number, preferably digits only.",
+   "fieldname": "phone_number",
+   "fieldtype": "Data",
+   "label": "Phone Number",
+   "reqd": 1
+  },
+  {
+   "fieldname": "display_name",
+   "fieldtype": "Data",
+   "label": "Display Name"
+  },
+  {
+   "fieldname": "profile_name",
+   "fieldtype": "Data",
+   "label": "WhatsApp Profile Name"
+  },
+  {
+   "fieldname": "whatsapp_profile",
+   "fieldtype": "Link",
+   "label": "WhatsApp Profile",
+   "options": "WhatsApp Profiles"
+  },
+  {
+   "fieldname": "contact",
+   "fieldtype": "Link",
+   "label": "Contact",
+   "options": "Contact"
+  },
+  {
+   "fieldname": "raven_workspace",
+   "fieldtype": "Link",
+   "label": "Raven Workspace",
+   "options": "Raven Workspace"
+  },
+  {
+   "fieldname": "raven_channel",
+   "fieldtype": "Link",
+   "label": "Raven Channel",
+   "options": "Raven Channel"
+  },
+  {
+   "description": "Reserved for Thread Per Contact strategy.",
+   "fieldname": "parent_raven_message",
+   "fieldtype": "Link",
+   "label": "Parent Raven Message",
+   "options": "Raven Message"
+  },
+  {
+   "default": "Channel Per Contact",
+   "fieldname": "conversation_strategy",
+   "fieldtype": "Select",
+   "label": "Conversation Strategy",
+   "options": "Channel Per Contact\nThread Per Contact"
+  },
+  {
+   "default": "Open",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Open\nWaiting\nClosed\nDisabled"
+  },
+  {
+   "fieldname": "assigned_to",
+   "fieldtype": "Link",
+   "label": "Assigned To",
+   "options": "User"
+  },
+  {
+   "fieldname": "last_inbound_at",
+   "fieldtype": "Datetime",
+   "label": "Last Inbound At"
+  },
+  {
+   "fieldname": "last_outbound_at",
+   "fieldtype": "Datetime",
+   "label": "Last Outbound At"
+  },
+  {
+   "fieldname": "last_inbound_whatsapp_message",
+   "fieldtype": "Link",
+   "label": "Last Inbound WhatsApp Message",
+   "options": "WhatsApp Message"
+  },
+  {
+   "fieldname": "last_outbound_whatsapp_message",
+   "fieldtype": "Link",
+   "label": "Last Outbound WhatsApp Message",
+   "options": "WhatsApp Message"
+  },
+  {
+   "fieldname": "last_whatsapp_message_id",
+   "fieldtype": "Data",
+   "label": "Last WhatsApp Message ID"
+  },
+  {
+   "fieldname": "last_raven_message",
+   "fieldtype": "Link",
+   "label": "Last Raven Message",
+   "options": "Raven Message"
+  },
+  {
+   "fieldname": "notes",
+   "fieldtype": "Small Text",
+   "label": "Notes"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "istable": 0,
+ "links": [],
+ "modified": "2026-05-10 19:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "WhatsApp Raven Bridge",
+ "name": "WhatsApp Raven Conversation",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "search_fields": "phone_number, display_name, whatsapp_account, account_route, raven_channel",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "display_name",
+ "track_changes": 1
+}

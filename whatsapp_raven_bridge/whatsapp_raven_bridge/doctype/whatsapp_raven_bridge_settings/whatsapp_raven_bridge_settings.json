@@ -1,0 +1,108 @@
+{
+ "actions": [],
+ "creation": "2026-05-10 18:25:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "enabled",
+  "default_raven_workspace",
+  "default_channel_type",
+  "bridge_raven_bot",
+  "bridge_raven_user",
+  "default_whatsapp_account",
+  "conversation_strategy",
+  "enable_outbound_replies",
+  "enable_start_conversation",
+  "default_channel_members"
+ ],
+ "fields": [
+  {
+   "default": "0",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "label": "Enabled"
+  },
+  {
+   "fieldname": "default_raven_workspace",
+   "fieldtype": "Link",
+   "label": "Default Raven Workspace",
+   "options": "Raven Workspace"
+  },
+  {
+   "default": "Private",
+   "fieldname": "default_channel_type",
+   "fieldtype": "Select",
+   "label": "Default Channel Type",
+   "options": "Private\nPublic\nOpen"
+  },
+  {
+   "fieldname": "bridge_raven_bot",
+   "fieldtype": "Link",
+   "label": "Bridge Raven Bot",
+   "options": "Raven Bot"
+  },
+  {
+   "description": "This must be the Raven User linked to the selected Raven Bot. Raven Message.bot expects Raven User.",
+   "fieldname": "bridge_raven_user",
+   "fieldtype": "Link",
+   "label": "Bridge Raven User",
+   "options": "Raven User"
+  },
+  {
+   "fieldname": "default_whatsapp_account",
+   "fieldtype": "Link",
+   "label": "Default WhatsApp Account",
+   "options": "WhatsApp Account"
+  },
+  {
+   "default": "Channel Per Contact",
+   "fieldname": "conversation_strategy",
+   "fieldtype": "Select",
+   "label": "Conversation Strategy",
+   "options": "Channel Per Contact\nThread Per Contact"
+  },
+  {
+   "default": "0",
+   "fieldname": "enable_outbound_replies",
+   "fieldtype": "Check",
+   "label": "Enable Outbound Replies"
+  },
+  {
+   "default": "0",
+   "fieldname": "enable_start_conversation",
+   "fieldtype": "Check",
+   "label": "Enable Start Conversation"
+  },
+  {
+   "fieldname": "default_channel_members",
+   "fieldtype": "Table",
+   "label": "Default Channel Members",
+   "options": "WhatsApp Raven Default Channel Member"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-05-10 18:25:00.000000",
+ "modified_by": "Administrator",
+ "module": "WhatsApp Raven Bridge",
+ "name": "WhatsApp Raven Bridge Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
