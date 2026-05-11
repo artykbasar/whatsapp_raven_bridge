@@ -308,6 +308,64 @@ class TestAccountRouteDesign(IntegrationTestCase):
 			frappe.db.exists("WhatsApp Raven Message Link", {"raven_message": parent_message_name})
 		)
 
+	def test_thread_destination_does_not_call_raven_create_thread_api(self):
+		route = self._create_route("thread-no-api", conversation_strategy="Thread Per Contact")
+		conversation = get_or_create_conversation(
+			"+447733110106",
+			whatsapp_account=self.ACCOUNT_NAME,
+			profile_name=f"{self.PREFIX} No API",
+		)
+
+		from raven.api import threads as raven_threads
+
+		original_create_thread = raven_threads.create_thread
+		state = {"called": False}
+
+		def fake_create_thread(message_id):
+			state["called"] = True
+			raise AssertionError("create_thread should not be called by bridge thread resolver")
+
+		raven_threads.create_thread = fake_create_thread
+		try:
+			channel = ensure_raven_destination(conversation)
+		finally:
+			raven_threads.create_thread = original_create_thread
+
+		self.assertFalse(state["called"])
+		self.assertTrue(channel.is_thread)
+
+	def test_guest_inbound_thread_creation_does_not_log_create_thread_permission_error(self):
+		route = self._create_route("thread-guest", conversation_strategy="Thread Per Contact")
+		error_title = "WhatsApp Raven Bridge: create_thread fallback"
+		before_count = frappe.db.count("Error Log", {"method": error_title})
+
+		current_user = frappe.session.user
+		try:
+			frappe.set_user("Guest")
+			incoming = self._insert_incoming_thread_message(
+				phone="+447733110107",
+				message_id="wamid.warc4c.thread.guest.001",
+				body="thread route guest inbound",
+			)
+		finally:
+			frappe.set_user(current_user)
+
+		phone_norm = normalize_phone_number("+447733110107")
+		conversation_name = frappe.db.get_value(
+			"WhatsApp Raven Conversation",
+			{"phone_number": phone_norm, "whatsapp_account": self.ACCOUNT_NAME},
+			"name",
+		)
+		self.assertTrue(conversation_name)
+		conversation = frappe.get_doc("WhatsApp Raven Conversation", conversation_name)
+		self.assertEqual(conversation.account_route, route.name)
+		self.assertTrue(conversation.raven_channel)
+		self.assertTrue(conversation.parent_raven_message)
+		self.assertTrue(frappe.db.exists("WhatsApp Raven Message Link", {"whatsapp_message": incoming.name}))
+
+		after_count = frappe.db.count("Error Log", {"method": error_title})
+		self.assertEqual(after_count, before_count)
+
 	def test_outbound_allows_assigned_route_member(self):
 		route = self._create_route("allow", conversation_strategy="Channel Per Contact")
 		conversation = self._make_conversation(route, "+447733110010")

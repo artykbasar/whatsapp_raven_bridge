@@ -22,10 +22,10 @@ from whatsapp_raven_bridge.utils.settings import get_settings
 def handle_raven_message_after_insert(doc, method=None):
 	"""Hook entrypoint for Raven Message.after_insert."""
 	try:
-		return process_outgoing_raven_message(doc)
+		process_outgoing_raven_message(doc)
 	except Exception as error:
 		log_outbound_error(doc, error)
-		return "error"
+	return None
 
 
 def process_outgoing_raven_message(doc):

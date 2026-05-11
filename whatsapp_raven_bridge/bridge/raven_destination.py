@@ -362,25 +362,14 @@ def _create_or_get_thread_channel(parent_message, inbox_channel):
 	if frappe.db.exists(RAVEN_CHANNEL_DOCTYPE, thread_name):
 		channel = frappe.get_doc(RAVEN_CHANNEL_DOCTYPE, thread_name)
 		if cint(channel.is_thread):
-			return channel
-
-	thread_id = None
-	try:
-		from raven.api.threads import create_thread
-
-		result = create_thread(parent_message.name)
-		if isinstance(result, dict):
-			thread_id = result.get("thread_id")
-	except Exception:
-		frappe.log_error(
-			title="WhatsApp Raven Bridge: create_thread fallback",
-			message=frappe.get_traceback(),
-		)
-
-	thread_id = cstr(thread_id or "").strip() or thread_name
-	if frappe.db.exists(RAVEN_CHANNEL_DOCTYPE, thread_id):
-		channel = frappe.get_doc(RAVEN_CHANNEL_DOCTYPE, thread_id)
-		if cint(channel.is_thread):
+			if not cint(parent_message.is_thread):
+				frappe.db.set_value(
+					RAVEN_MESSAGE_DOCTYPE,
+					parent_message.name,
+					"is_thread",
+					1,
+					update_modified=False,
+				)
 			return channel
 
 	channel = frappe.get_doc(
@@ -388,7 +377,7 @@ def _create_or_get_thread_channel(parent_message, inbox_channel):
 			"doctype": RAVEN_CHANNEL_DOCTYPE,
 			"channel_name": parent_message.name,
 			"workspace": inbox_channel.workspace,
-			"type": "Private",
+			"type": inbox_channel.type or "Private",
 			"is_thread": 1,
 			"is_dm_thread": cint(inbox_channel.is_direct_message),
 			"channel_description": cstr(parent_message.content or "")[:140],
@@ -396,6 +385,16 @@ def _create_or_get_thread_channel(parent_message, inbox_channel):
 	)
 	channel.flags.do_not_add_member = True
 	channel.insert(ignore_permissions=True)
+
+	if not cint(parent_message.is_thread):
+		frappe.db.set_value(
+			RAVEN_MESSAGE_DOCTYPE,
+			parent_message.name,
+			"is_thread",
+			1,
+			update_modified=False,
+		)
+
 	return channel
 
 
