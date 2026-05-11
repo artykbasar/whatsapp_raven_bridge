@@ -6,8 +6,14 @@ from frappe.utils import cstr
 from frappe.utils.password import set_encrypted_password
 
 from whatsapp_raven_bridge.bridge.conversation import get_or_create_conversation, normalize_phone_number
-from whatsapp_raven_bridge.bridge.inbound import process_incoming_whatsapp_message
-from whatsapp_raven_bridge.bridge.outbound import process_outgoing_raven_message
+from whatsapp_raven_bridge.bridge.inbound import (
+	handle_whatsapp_message_after_insert,
+	process_incoming_whatsapp_message,
+)
+from whatsapp_raven_bridge.bridge.outbound import (
+	handle_raven_message_after_insert,
+	process_outgoing_raven_message,
+)
 from whatsapp_raven_bridge.bridge.raven_destination import ensure_raven_destination
 
 
@@ -364,6 +370,27 @@ class TestTwoWayMVPHardening(IntegrationTestCase):
 			settings.enable_outbound_replies = original
 			settings.save(ignore_permissions=True)
 			frappe.db.commit()
+
+	def test_12_inbound_hook_returns_none(self):
+		incoming = self._insert_whatsapp_message(
+			type_="Incoming",
+			content_type="text",
+			phone=self._phone("12"),
+			message_id=self._message_id("12"),
+			message=f"{self.PREFIX} incoming 12",
+		)
+		result = handle_whatsapp_message_after_insert(incoming)
+		self.assertIsNone(result)
+
+	def test_13_outbound_hook_returns_none(self):
+		conversation = self._ensure_conversation("13")
+		raven_message = self._insert_raven_message(
+			channel_id=conversation.raven_channel,
+			text=f"<p>{self.PREFIX} outbound 13 hello</p>",
+			is_bot_message=0,
+		)
+		result = handle_raven_message_after_insert(raven_message)
+		self.assertIsNone(result)
 
 	@classmethod
 	def _snapshot_settings(cls):

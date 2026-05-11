@@ -22,10 +22,10 @@ from whatsapp_raven_bridge.utils.settings import get_settings
 def handle_whatsapp_message_after_insert(doc, method=None):
 	"""Hook entrypoint for WhatsApp Message.after_insert."""
 	try:
-		return process_incoming_whatsapp_message(doc)
+		process_incoming_whatsapp_message(doc)
 	except Exception as error:
 		log_inbound_error(doc, error)
-		return "error"
+	return None
 
 
 def process_incoming_whatsapp_message(doc):
