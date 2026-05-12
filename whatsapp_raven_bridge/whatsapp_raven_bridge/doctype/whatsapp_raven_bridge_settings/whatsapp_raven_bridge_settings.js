@@ -64,7 +64,6 @@ async function open_bootstrap_dialog(frm) {
 		method: "whatsapp_raven_bridge.api.setup.get_setup_status",
 	});
 	const has_whatsapp_account = !!status?.message?.has_whatsapp_account;
-	const valid_bridge_system_user = status?.message?.has_bridge_system_user ? frm.doc.bridge_system_user : "";
 
 	const dialog = new frappe.ui.Dialog({
 		title: __("Run Bootstrap Setup"),
@@ -82,13 +81,6 @@ async function open_bootstrap_dialog(frm) {
 				fieldtype: "Data",
 				default: "WhatsApp Bridge Bot",
 				reqd: 1,
-			},
-			{
-				fieldname: "bridge_system_user",
-				label: __("Bridge System User"),
-				fieldtype: "Link",
-				options: "User",
-				default: valid_bridge_system_user || "",
 			},
 			{
 				fieldname: "whatsapp_account",
