@@ -12,8 +12,10 @@ from whatsapp_raven_bridge.api.setup import (
 	bootstrap_whatsapp_raven_bridge,
 	ensure_default_bridge_system_user,
 	get_setup_status,
+	repair_bridge_system_user,
 )
 from whatsapp_raven_bridge.patches.fix_stale_bridge_system_user import execute as patch_fix_stale_bridge_system_user
+from whatsapp_raven_bridge.patches.fix_stale_bridge_system_user_v2 import execute as patch_fix_stale_bridge_system_user_v2
 from whatsapp_raven_bridge.bridge.conversation import normalize_phone_number
 from whatsapp_raven_bridge.bridge.raven_destination import ensure_raven_destination
 from whatsapp_raven_bridge.utils.settings import bridge_user_context
@@ -261,6 +263,34 @@ class TestSetupBootstrapAndServiceUser(IntegrationTestCase):
 
 		self.assertEqual(settings.bridge_system_user, self.SYSTEM_USER_EMAIL)
 
+	def test_validate_links_repairs_empty_before_link_validation(self):
+		self._force_set_bridge_system_user(None)
+		if frappe.db.exists("User", DEFAULT_BRIDGE_SYSTEM_USER_EMAIL):
+			frappe.delete_doc("User", DEFAULT_BRIDGE_SYSTEM_USER_EMAIL, force=True)
+		frappe.db.commit()
+
+		settings = frappe.get_single("WhatsApp Raven Bridge Settings")
+		settings.bridge_system_user = ""
+		settings._action = "save"
+		settings._validate_links()
+
+		self.assertEqual(settings.bridge_system_user, DEFAULT_BRIDGE_SYSTEM_USER_EMAIL)
+		self.assertTrue(frappe.db.exists("User", DEFAULT_BRIDGE_SYSTEM_USER_EMAIL))
+
+	def test_validate_links_repairs_stale_missing_email_before_link_validation(self):
+		stale_email = "warbh-validate-links-stale@example.com"
+		if frappe.db.exists("User", stale_email):
+			frappe.delete_doc("User", stale_email, force=True)
+		frappe.db.commit()
+
+		settings = frappe.get_single("WhatsApp Raven Bridge Settings")
+		settings.bridge_system_user = stale_email
+		settings._action = "save"
+		settings._validate_links()
+
+		self.assertEqual(settings.bridge_system_user, stale_email)
+		self.assertTrue(frappe.db.exists("User", stale_email))
+
 	def test_settings_save_with_missing_email_bridge_system_user_creates_user(self):
 		missing_email = "warbh-created-from-settings@example.com"
 		if frappe.db.exists("User", missing_email):
@@ -443,6 +473,36 @@ class TestSetupBootstrapAndServiceUser(IntegrationTestCase):
 			DEFAULT_BRIDGE_SYSTEM_USER_EMAIL,
 		)
 
+	def test_patch_v2_repairs_stale_single_even_after_old_patch(self):
+		# Simulate old patch having already run.
+		patch_fix_stale_bridge_system_user()
+
+		stale_email = "warbh-v2-stale@example.com"
+		self._force_set_bridge_system_user(stale_email)
+		if frappe.db.exists("User", stale_email):
+			frappe.delete_doc("User", stale_email, force=True)
+		frappe.db.commit()
+
+		patch_fix_stale_bridge_system_user_v2()
+		self.assertTrue(frappe.db.exists("User", stale_email))
+		self.assertEqual(
+			frappe.db.get_single_value("WhatsApp Raven Bridge Settings", "bridge_system_user"),
+			stale_email,
+		)
+
+	def test_repair_bridge_system_user_fixes_stale_single(self):
+		stale_email = "warbh-repair-api-stale@example.com"
+		self._force_set_bridge_system_user(stale_email)
+		if frappe.db.exists("User", stale_email):
+			frappe.delete_doc("User", stale_email, force=True)
+		frappe.db.commit()
+
+		result = repair_bridge_system_user()
+		self.assertEqual(result.get("settings_value_before"), stale_email)
+		self.assertEqual(result.get("settings_value_after"), stale_email)
+		self.assertEqual(result.get("user"), stale_email)
+		self.assertTrue(frappe.db.exists("User", stale_email))
+
 	def test_bootstrap_from_settings_dialog_with_existing_bridge_system_user(self):
 		ensured = ensure_default_bridge_system_user()
 		service_user = ensured.get("user")
@@ -470,11 +530,26 @@ class TestSetupBootstrapAndServiceUser(IntegrationTestCase):
 		self.assertFalse(status.get("has_bridge_system_user"))
 		self.assertTrue(
 			any(
-				"Configured Bridge System User does not exist. Setup can recreate it."
+				"Configured Bridge System User is missing. Run migrate or repair_bridge_system_user."
 				in cstr(warning)
 				for warning in status.get("warnings", [])
 			)
 		)
+
+	def test_settings_controller_uses_internal_helpers_not_whitelisted_wrapper(self):
+		controller_path = frappe.get_app_path(
+			"whatsapp_raven_bridge",
+			"whatsapp_raven_bridge",
+			"doctype",
+			"whatsapp_raven_bridge_settings",
+			"whatsapp_raven_bridge_settings.py",
+		)
+		with open(controller_path, encoding="utf-8") as handle:
+			content = handle.read()
+
+		self.assertIn("_ensure_default_bridge_system_user_state", content)
+		self.assertIn("_ensure_bridge_system_user_with_state", content)
+		self.assertNotIn("ensure_default_bridge_system_user(", content)
 
 	def test_bridge_user_context_restores_original_user(self):
 		self._bootstrap_with_admin_member()

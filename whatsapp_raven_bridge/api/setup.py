@@ -82,6 +82,72 @@ def ensure_default_bridge_system_user(
 	)
 
 
+def _repair_bridge_system_user_single_value(default_email: str | None = None) -> frappe._dict:
+	"""Repair stale/missing bridge_system_user single value without Settings.save()."""
+	default_email = cstr(default_email or DEFAULT_BRIDGE_SYSTEM_USER_EMAIL).strip().lower()
+	result = frappe._dict(
+		{
+			"user": None,
+			"created": False,
+			"settings_value_before": "",
+			"settings_value_after": "",
+		}
+	)
+
+	if not default_email:
+		return result
+
+	try:
+		if not frappe.db.exists("DocType", "WhatsApp Raven Bridge Settings"):
+			return result
+		if not frappe.db.table_exists("User"):
+			return result
+	except Exception:
+		return result
+
+	current_value = cstr(
+		frappe.db.get_single_value("WhatsApp Raven Bridge Settings", "bridge_system_user")
+	).strip()
+	result.settings_value_before = current_value
+
+	if not current_value:
+		target_identifier = default_email
+	elif frappe.db.exists("User", current_value):
+		target_identifier = current_value
+	elif "@" in current_value:
+		target_identifier = current_value
+	else:
+		target_identifier = default_email
+
+	user_info = _ensure_bridge_system_user_with_state(target_identifier)
+	user_name = cstr((user_info or {}).get("user") or "").strip()
+
+	if not user_name and target_identifier != default_email:
+		user_info = _ensure_bridge_system_user_with_state(default_email)
+		user_name = cstr((user_info or {}).get("user") or "").strip()
+
+	if not user_name:
+		return result
+
+	result.user = user_name
+	result.created = bool((user_info or {}).get("created"))
+
+	if current_value != user_name:
+		frappe.db.set_single_value("WhatsApp Raven Bridge Settings", "bridge_system_user", user_name)
+
+	result.settings_value_after = cstr(
+		frappe.db.get_single_value("WhatsApp Raven Bridge Settings", "bridge_system_user")
+	).strip()
+	return result
+
+
+@frappe.whitelist()
+def repair_bridge_system_user(default_email: str | None = None) -> dict[str, Any]:
+	"""Admin utility to repair stale/missing bridge_system_user in Singles."""
+	_require_setup_permission()
+	return dict(_repair_bridge_system_user_single_value(default_email=default_email))
+
+
 def _require_setup_permission() -> None:
 	"""Allow bootstrap operations only for privileged setup users."""
 	if frappe.session.user == "Administrator":
@@ -332,7 +398,7 @@ def get_setup_status() -> dict[str, Any]:
 		status.has_bridge_system_user = bool(system_user and _is_enabled_user(system_user))
 		if system_user and not status.has_bridge_system_user:
 			status.warnings.append(
-				_("Configured Bridge System User does not exist. Setup can recreate it.")
+				_("Configured Bridge System User is missing. Run migrate or repair_bridge_system_user.")
 			)
 	else:
 		status.warnings.append(_("WhatsApp Raven Bridge Settings is missing."))
