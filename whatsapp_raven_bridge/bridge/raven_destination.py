@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from contextlib import nullcontext
 
 import frappe
 from frappe import _
@@ -409,12 +410,13 @@ def _create_or_get_thread_channel(parent_message, inbox_channel):
 	return channel
 
 
-def ensure_channel_member(channel_id, raven_user, is_admin=0):
+def ensure_channel_member(channel_id, raven_user, is_admin=0, use_bridge_context=True):
 	"""Create a Raven Channel Member if missing and return the member document."""
 	if not channel_id or not raven_user:
 		return None
 
-	with bridge_user_context():
+	ctx = bridge_user_context() if use_bridge_context else nullcontext()
+	with ctx:
 		existing = frappe.db.exists(
 			RAVEN_CHANNEL_MEMBER_DOCTYPE,
 			{
@@ -465,12 +467,13 @@ def ensure_channel_member(channel_id, raven_user, is_admin=0):
 		return frappe.get_doc(RAVEN_CHANNEL_MEMBER_DOCTYPE, existing) if existing else member
 
 
-def ensure_workspace_member(workspace, raven_user, is_admin=0):
+def ensure_workspace_member(workspace, raven_user, is_admin=0, use_bridge_context=True):
 	"""Create a Raven Workspace Member if missing and return the member document."""
 	if not workspace or not raven_user:
 		return None
 
-	with bridge_user_context():
+	ctx = bridge_user_context() if use_bridge_context else nullcontext()
+	with ctx:
 		existing = frappe.db.exists(
 			RAVEN_WORKSPACE_MEMBER_DOCTYPE,
 			{

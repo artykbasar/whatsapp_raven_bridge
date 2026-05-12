@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from typing import Any
 
 import frappe
@@ -13,6 +14,144 @@ from whatsapp_raven_bridge.bridge.account_route import (
 	get_or_create_inbox_channel,
 )
 from whatsapp_raven_bridge.utils.settings import bridge_user_context, get_settings
+
+DEFAULT_BRIDGE_SYSTEM_USER_EMAIL = "whatsapp.bridge@example.com"
+
+
+def _ensure_default_bridge_system_user_state(
+	default_email: str | None = None, update_settings: bool = True
+) -> frappe._dict:
+	"""Internal helper to ensure a valid bridge system user and settings link."""
+	default_email = cstr(default_email or DEFAULT_BRIDGE_SYSTEM_USER_EMAIL).strip().lower()
+	result = frappe._dict({"user": None, "created": False, "settings_updated": False})
+	if not default_email:
+		return result
+
+	try:
+		if not frappe.db.exists("DocType", "WhatsApp Raven Bridge Settings"):
+			return result
+		if not frappe.db.table_exists("User"):
+			return result
+	except Exception:
+		return result
+
+	settings = get_settings()
+	if not settings:
+		return result
+
+	configured = cstr(settings.get("bridge_system_user") or "").strip()
+	candidates = []
+	if configured:
+		candidates.append(configured)
+	if default_email and default_email not in candidates:
+		candidates.append(default_email)
+
+	user_info = None
+	for candidate in candidates:
+		user_info = _ensure_bridge_system_user_with_state(candidate)
+		if user_info and user_info.user:
+			break
+
+	if not user_info or not user_info.user:
+		return result
+
+	result.user = user_info.user
+	result.created = bool(user_info.created)
+
+	if update_settings:
+		if settings.bridge_system_user != result.user:
+			settings.bridge_system_user = result.user
+			settings.save(ignore_permissions=True)
+			result.settings_updated = True
+
+	return result
+
+
+@frappe.whitelist()
+def ensure_default_bridge_system_user(
+	default_email: str | None = None, update_settings: bool = True
+) -> dict[str, Any]:
+	"""Create/reuse default Bridge System User and persist a valid Link in settings."""
+	_require_setup_permission()
+	return dict(
+		_ensure_default_bridge_system_user_state(
+			default_email=default_email,
+			update_settings=bool(cint(update_settings)),
+		)
+	)
+
+
+def _repair_bridge_system_user_single_value(default_email: str | None = None) -> frappe._dict:
+	"""Repair stale/missing bridge_system_user single value without Settings.save()."""
+	default_email = cstr(default_email or DEFAULT_BRIDGE_SYSTEM_USER_EMAIL).strip().lower()
+	result = frappe._dict(
+		{
+			"user": None,
+			"created": False,
+			"settings_value_before": "",
+			"settings_value_after": "",
+		}
+	)
+
+	if not default_email:
+		return result
+
+	try:
+		if not frappe.db.exists("DocType", "WhatsApp Raven Bridge Settings"):
+			return result
+		if not frappe.db.table_exists("User"):
+			return result
+	except Exception:
+		return result
+
+	current_value = cstr(
+		frappe.db.get_single_value("WhatsApp Raven Bridge Settings", "bridge_system_user")
+	).strip()
+	result.settings_value_before = current_value
+
+	if not current_value:
+		target_identifier = default_email
+	elif frappe.db.exists("User", current_value):
+		target_identifier = current_value
+	elif "@" in current_value:
+		target_identifier = current_value
+	else:
+		target_identifier = default_email
+
+	user_info = _ensure_bridge_system_user_with_state(target_identifier)
+	user_name = cstr((user_info or {}).get("user") or "").strip()
+
+	if not user_name and target_identifier != default_email:
+		user_info = _ensure_bridge_system_user_with_state(default_email)
+		user_name = cstr((user_info or {}).get("user") or "").strip()
+
+	if not user_name:
+		return result
+
+	result.user = user_name
+	result.created = bool((user_info or {}).get("created"))
+
+	if current_value != user_name:
+		frappe.db.set_single_value("WhatsApp Raven Bridge Settings", "bridge_system_user", user_name)
+
+	result.settings_value_after = cstr(
+		frappe.db.get_single_value("WhatsApp Raven Bridge Settings", "bridge_system_user")
+	).strip()
+	return result
+
+
+@frappe.whitelist()
+def repair_bridge_system_user(default_email: str | None = None) -> dict[str, Any]:
+	"""Admin utility to repair stale/missing bridge_system_user in Singles."""
+	_require_setup_permission()
+	return dict(_repair_bridge_system_user_single_value(default_email=default_email))
+
+
+def _require_setup_permission() -> None:
+	"""Allow bootstrap operations only for privileged setup users."""
+	if frappe.session.user == "Administrator":
+		return
+	frappe.only_for("System Manager")
 
 
 @frappe.whitelist()
@@ -28,6 +167,8 @@ def bootstrap_whatsapp_raven_bridge(
 	channel_type: str = "Private",
 ) -> dict[str, Any]:
 	"""Create or reuse minimal bridge configuration for production setup."""
+	_require_setup_permission()
+
 	summary = frappe._dict(
 		{
 			"settings_updated": False,
@@ -35,6 +176,7 @@ def bootstrap_whatsapp_raven_bridge(
 			"bot": None,
 			"bridge_raven_user": None,
 			"bridge_system_user": None,
+			"setup_actor": frappe.session.user,
 			"routes": [],
 			"warnings": [],
 			"next_manual_steps": [],
@@ -54,14 +196,33 @@ def bootstrap_whatsapp_raven_bridge(
 
 	accounts = _coerce_list(whatsapp_accounts)
 	member_inputs = _coerce_list(route_members)
+	settings = get_settings()
+	if not settings:
+		frappe.throw(_("WhatsApp Raven Bridge Settings is missing. Please run migrate first."))
 
-	system_user_name = _ensure_bridge_system_user(bridge_system_user) if bridge_system_user else None
-	if bridge_system_user and not system_user_name:
-		summary.warnings.append(_("Bridge system user could not be created/resolved: {0}").format(bridge_system_user))
+	bridge_system_user_arg = cstr(bridge_system_user or "").strip() or None
+	configured_system_user = cstr(settings.get("bridge_system_user") or "").strip()
+	if bridge_system_user_arg:
+		desired_bridge_system_user = bridge_system_user_arg
+	elif configured_system_user and _is_enabled_user(configured_system_user):
+		desired_bridge_system_user = configured_system_user
+	else:
+		desired_bridge_system_user = DEFAULT_BRIDGE_SYSTEM_USER_EMAIL
 
-	with bridge_user_context():
-		workspace, workspace_state = _ensure_workspace(workspace_name)
-		bot, bot_state = _ensure_bot(bridge_bot_name)
+	system_user_name = _ensure_bridge_system_user(desired_bridge_system_user)
+	if not system_user_name and desired_bridge_system_user != DEFAULT_BRIDGE_SYSTEM_USER_EMAIL:
+		summary.warnings.append(
+			_("Could not resolve configured Bridge System User {0}; using default {1}.").format(
+				desired_bridge_system_user, DEFAULT_BRIDGE_SYSTEM_USER_EMAIL
+			)
+		)
+		system_user_name = _ensure_bridge_system_user(DEFAULT_BRIDGE_SYSTEM_USER_EMAIL)
+
+	if not system_user_name:
+		frappe.throw(_("Could not create or resolve Bridge System User."))
+
+	workspace, workspace_state = _ensure_workspace(workspace_name)
+	bot, bot_state = _ensure_bot(bridge_bot_name)
 
 	summary.workspace = workspace.name
 	summary.bot = bot.name
@@ -71,24 +232,18 @@ def bootstrap_whatsapp_raven_bridge(
 	if not bot.raven_user:
 		frappe.throw(_("Raven Bot {0} does not have a linked Raven User.").format(bot.name))
 
-	settings = get_settings()
-	if not settings:
-		frappe.throw(_("WhatsApp Raven Bridge Settings is missing. Please run migrate first."))
-
-	configured_system_user = system_user_name or cstr(settings.get("bridge_system_user") or "").strip() or None
-	with bridge_user_context():
-		settings.enabled = 1
-		settings.bridge_system_user = configured_system_user
-		settings.bridge_raven_bot = bot.name
-		settings.bridge_raven_user = bot.raven_user
-		settings.default_raven_workspace = workspace.name
-		settings.default_channel_type = channel_type
-		settings.conversation_strategy = conversation_strategy
-		settings.enable_outbound_replies = cint(enable_outbound_replies)
-		settings.enable_start_conversation = cint(enable_start_conversation)
-		settings.save(ignore_permissions=True)
+	settings.enabled = 1
+	settings.bridge_system_user = system_user_name
+	settings.bridge_raven_bot = bot.name
+	settings.bridge_raven_user = bot.raven_user
+	settings.default_raven_workspace = workspace.name
+	settings.default_channel_type = channel_type
+	settings.conversation_strategy = conversation_strategy
+	settings.enable_outbound_replies = cint(enable_outbound_replies)
+	settings.enable_start_conversation = cint(enable_start_conversation)
+	settings.save(ignore_permissions=True)
 	summary.settings_updated = True
-	summary.bridge_system_user = configured_system_user
+	summary.bridge_system_user = system_user_name
 
 	if not accounts:
 		summary.warnings.append(
@@ -129,11 +284,11 @@ def bootstrap_whatsapp_raven_bridge(
 			channel_type=channel_type,
 			conversation_strategy=conversation_strategy,
 			members=members,
+			use_bridge_context=False,
 		)
 
-		with bridge_user_context():
-			inbox_channel = get_or_create_inbox_channel(route)
-			ensure_route_memberships(route)
+		inbox_channel = get_or_create_inbox_channel(route, use_bridge_context=False)
+		ensure_route_memberships(route, use_bridge_context=False)
 
 		summary.routes.append(
 			{
@@ -166,6 +321,52 @@ def bootstrap_whatsapp_raven_bridge(
 
 
 @frappe.whitelist()
+def bootstrap_from_settings_dialog(
+	workspace_name: str | None = None,
+	bridge_bot_name: str | None = None,
+	bridge_system_user: str | None = None,
+	whatsapp_account: str | None = None,
+	primary_raven_user: str | None = None,
+	conversation_strategy: str = "Thread Per Contact",
+	channel_type: str = "Private",
+	enable_outbound_replies: int = 1,
+	enable_start_conversation: int = 0,
+	can_reply: int = 1,
+	is_admin: int = 1,
+) -> dict[str, Any]:
+	"""Dialog-friendly wrapper around bootstrap_whatsapp_raven_bridge."""
+	_require_setup_permission()
+
+	bridge_system_user_value = cstr(bridge_system_user).strip() or None
+
+	accounts: list[str] = []
+	if cstr(whatsapp_account).strip():
+		accounts = [cstr(whatsapp_account).strip()]
+
+	route_members: list[dict[str, Any]] = []
+	if cstr(primary_raven_user).strip():
+		route_members.append(
+			{
+				"raven_user": cstr(primary_raven_user).strip(),
+				"is_admin": cint(is_admin),
+				"can_reply": cint(can_reply),
+			}
+		)
+
+	return bootstrap_whatsapp_raven_bridge(
+		workspace_name=workspace_name,
+		bridge_bot_name=bridge_bot_name,
+		bridge_system_user=bridge_system_user_value,
+		whatsapp_accounts=accounts,
+		route_members=route_members,
+		enable_outbound_replies=enable_outbound_replies,
+		enable_start_conversation=enable_start_conversation,
+		conversation_strategy=conversation_strategy,
+		channel_type=channel_type,
+	)
+
+
+@frappe.whitelist()
 def get_setup_status() -> dict[str, Any]:
 	"""Return setup status summary for bridge configuration checks."""
 	status = frappe._dict(
@@ -191,10 +392,12 @@ def get_setup_status() -> dict[str, Any]:
 	if settings:
 		status.settings_enabled = bool(cint(settings.enabled))
 		status.enable_outbound_replies = bool(cint(settings.enable_outbound_replies))
-		system_user = settings.get("bridge_system_user")
-		status.has_bridge_system_user = bool(
-			system_user and frappe.db.exists("User", {"name": system_user, "enabled": 1})
-		)
+		system_user = cstr(settings.get("bridge_system_user") or "").strip()
+		status.has_bridge_system_user = bool(system_user and _is_enabled_user(system_user))
+		if system_user and not status.has_bridge_system_user:
+			status.warnings.append(
+				_("Configured Bridge System User is missing. Run migrate or repair_bridge_system_user.")
+			)
 	else:
 		status.warnings.append(_("WhatsApp Raven Bridge Settings is missing."))
 
@@ -220,8 +423,12 @@ def get_setup_status() -> dict[str, Any]:
 		status.warnings.append(_("No Raven Workspace found."))
 	if not status.has_raven_bot:
 		status.warnings.append(_("No Raven Bot found."))
-	if not status.has_bridge_system_user:
-		status.warnings.append(_("Bridge System User is not configured or not enabled."))
+	if not cstr(settings.get("bridge_system_user") if settings else "").strip():
+		status.warnings.append(
+			_(
+				"Bridge System User is not configured. Save settings empty to auto-create it, or run bootstrap."
+			)
+		)
 	if status.number_of_routes == 0:
 		status.warnings.append(_("No WhatsApp Raven Account Route records found."))
 	if status.routes_missing_members:
@@ -256,38 +463,67 @@ def _coerce_list(value: Any) -> list[Any]:
 
 
 def _ensure_bridge_system_user(user_identifier: str | None) -> str | None:
+	user_info = _ensure_bridge_system_user_with_state(user_identifier)
+	return cstr(user_info.get("user") or "").strip() or None
+
+
+def _ensure_bridge_system_user_with_state(user_identifier: str | None) -> frappe._dict:
 	user_identifier = cstr(user_identifier or "").strip()
+	result = frappe._dict({"user": None, "created": False})
 	if not user_identifier:
-		return None
+		return result
 
 	existing_user_name = None
 	if frappe.db.exists("User", user_identifier):
 		existing_user_name = user_identifier
-	else:
+	elif "@" in user_identifier:
 		existing_user_name = frappe.db.get_value("User", {"email": user_identifier}, "name")
+	else:
+		existing_user_name = frappe.db.get_value("User", {"name": user_identifier}, "name")
 
 	if existing_user_name:
 		user_doc = frappe.get_doc("User", existing_user_name)
 		if not cint(user_doc.enabled):
 			user_doc.enabled = 1
 			user_doc.save(ignore_permissions=True)
-		return user_doc.name
+		result.user = user_doc.name
+		return result
 
 	email = user_identifier if "@" in user_identifier else f"{user_identifier}@local.invalid"
-	first_name = "WhatsApp Bridge Service"
 
-	with bridge_user_context():
+	try:
 		user_doc = frappe.get_doc(
 			{
 				"doctype": "User",
 				"email": email,
-				"first_name": first_name,
+				"first_name": "WhatsApp Bridge",
+				"last_name": "Service",
 				"send_welcome_email": 0,
 				"enabled": 1,
 				"user_type": "System User",
 			}
 		).insert(ignore_permissions=True)
-	return user_doc.name
+		result.user = user_doc.name
+		result.created = True
+		return result
+	except Exception:
+		# Handle race where another process created it in parallel.
+		existing_user_name = frappe.db.get_value("User", {"email": email}, "name")
+		if existing_user_name:
+			user_doc = frappe.get_doc("User", existing_user_name)
+			if not cint(user_doc.enabled):
+				user_doc.enabled = 1
+				user_doc.save(ignore_permissions=True)
+			result.user = user_doc.name
+			return result
+		return result
+
+
+def _is_enabled_user(user_name: str | None) -> bool:
+	user_name = cstr(user_name or "").strip()
+	if not user_name:
+		return False
+	return bool(frappe.db.exists("User", {"name": user_name, "enabled": 1}))
 
 
 def _ensure_workspace(workspace_name: str):
@@ -391,6 +627,7 @@ def _create_or_update_route(
 	channel_type,
 	conversation_strategy,
 	members,
+	use_bridge_context: bool = True,
 ):
 	route_name = frappe.db.get_value(
 		"WhatsApp Raven Account Route",
@@ -407,7 +644,8 @@ def _create_or_update_route(
 		route.whatsapp_account = whatsapp_account
 		state = "created"
 
-	with bridge_user_context():
+	ctx = bridge_user_context() if use_bridge_context else nullcontext()
+	with ctx:
 		route.enabled = 1
 		route.raven_workspace = workspace
 		route.channel_type = channel_type

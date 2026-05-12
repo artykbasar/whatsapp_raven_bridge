@@ -43,7 +43,28 @@ High-level order:
 3. Configure `WhatsApp Raven Bridge Settings`.
 4. Configure `WhatsApp Raven Account Route` (recommended `Thread Per Contact`).
 
-## Setup Bootstrap (Optional)
+## Setup Methods
+
+### A) Recommended (Desk UI)
+
+Go to **WhatsApp Raven Bridge Settings** and use:
+
+- **Check Setup Status**
+- **Run Bootstrap Setup**
+
+`bridge_system_user` is optional. If left blank, saving settings auto-creates and assigns
+`whatsapp.bridge@example.com`.
+This user is for audit attribution only; inbound mirrored messages still use `bridge_raven_user`.
+
+### B) CLI / Bench
+
+Run bootstrap from bench execute or bench console.
+
+### C) Fully Manual
+
+Manually configure Raven Workspace/Bot, Bridge Settings, and Account Routes.
+
+## Bootstrap (CLI Example)
 
 You can bootstrap most bridge records after at least one WhatsApp Account exists:
 
@@ -66,6 +87,8 @@ Check current setup state with:
 ```python
 frappe.call("whatsapp_raven_bridge.api.setup.get_setup_status")
 ```
+
+Bootstrap does not configure Meta webhook URLs, WhatsApp tokens, or template approval flows.
 
 ## Current Features
 
