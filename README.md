@@ -43,6 +43,30 @@ High-level order:
 3. Configure `WhatsApp Raven Bridge Settings`.
 4. Configure `WhatsApp Raven Account Route` (recommended `Thread Per Contact`).
 
+## Setup Bootstrap (Optional)
+
+You can bootstrap most bridge records after at least one WhatsApp Account exists:
+
+```python
+frappe.call(
+	"whatsapp_raven_bridge.api.setup.bootstrap_whatsapp_raven_bridge",
+	workspace_name="WhatsApp Support",
+	bridge_bot_name="WhatsApp Bridge Bot",
+	bridge_system_user="whatsapp-bridge-service@example.com",
+	whatsapp_accounts=["My WhatsApp Account"],
+	route_members=[{"raven_user": "Administrator", "is_admin": 1, "can_reply": 1}],
+	conversation_strategy="Thread Per Contact",
+	channel_type="Private",
+	enable_outbound_replies=1,
+)
+```
+
+Check current setup state with:
+
+```python
+frappe.call("whatsapp_raven_bridge.api.setup.get_setup_status")
+```
+
 ## Current Features
 
 - Inbound WhatsApp text to Raven
@@ -52,6 +76,7 @@ High-level order:
 - Thread-per-contact destination for account routes
 - Channel-per-contact fallback
 - Route-based outbound permission checks (`can_reply`)
+- Bridge System User audit context for bridge-created infrastructure
 
 ## Current Limitations
 
@@ -59,6 +84,8 @@ High-level order:
 - Start-conversation/template workflow not implemented yet
 - Message status sync not implemented yet
 - No Raven frontend action button yet
+- Meta webhook/token/template setup is still manual
+- Bridge does not expose a Raven UI button for template-start yet
 
 ## Documentation
 

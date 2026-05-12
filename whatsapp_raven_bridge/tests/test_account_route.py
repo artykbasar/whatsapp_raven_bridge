@@ -423,6 +423,7 @@ class TestAccountRouteDesign(IntegrationTestCase):
 		settings = frappe.get_single("WhatsApp Raven Bridge Settings")
 		return {
 			"enabled": settings.enabled,
+			"bridge_system_user": settings.bridge_system_user,
 			"default_raven_workspace": settings.default_raven_workspace,
 			"default_channel_type": settings.default_channel_type,
 			"bridge_raven_bot": settings.bridge_raven_bot,
@@ -461,6 +462,7 @@ class TestAccountRouteDesign(IntegrationTestCase):
 		settings.default_channel_type = "Private"
 		settings.bridge_raven_bot = cls.BOT_NAME
 		settings.bridge_raven_user = bot.raven_user or cls.BOT_NAME
+		settings.bridge_system_user = None
 		settings.default_whatsapp_account = cls.ACCOUNT_NAME
 		settings.conversation_strategy = "Channel Per Contact"
 		settings.enable_outbound_replies = 1

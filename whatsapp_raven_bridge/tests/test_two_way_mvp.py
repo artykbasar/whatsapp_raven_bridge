@@ -397,6 +397,7 @@ class TestTwoWayMVPHardening(IntegrationTestCase):
 		settings = frappe.get_single("WhatsApp Raven Bridge Settings")
 		snapshot = {
 			"enabled": settings.enabled,
+			"bridge_system_user": settings.bridge_system_user,
 			"default_raven_workspace": settings.default_raven_workspace,
 			"default_channel_type": settings.default_channel_type,
 			"bridge_raven_bot": settings.bridge_raven_bot,
@@ -518,6 +519,7 @@ class TestTwoWayMVPHardening(IntegrationTestCase):
 		settings.default_channel_type = "Private"
 		settings.bridge_raven_bot = cls.bridge_raven_bot
 		settings.bridge_raven_user = cls.bridge_raven_user
+		settings.bridge_system_user = None
 		settings.default_whatsapp_account = cls.whatsapp_account
 		settings.conversation_strategy = "Channel Per Contact"
 		settings.enable_outbound_replies = 1

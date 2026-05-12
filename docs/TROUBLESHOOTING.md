@@ -19,6 +19,8 @@ Check:
 - `conversation.whatsapp_account` or fallback `default_whatsapp_account`
 - `frappe_whatsapp` account health/credentials
 
+Also confirm the Raven message owner resolves to a route member Raven User.
+
 ## Duplicate messages
 
 Inspect **WhatsApp Raven Message Link** records:
@@ -43,3 +45,17 @@ Install dependency apps first:
 3. `whatsapp_raven_bridge`
 
 The bridge declares required apps in `hooks.py`.
+
+## Infrastructure records are owned by Guest
+
+Set `bridge_system_user` in **WhatsApp Raven Bridge Settings**.
+
+Bridge infrastructure writes (workspace/channel memberships, inbox/thread setup) run under this user context when configured. This does not change outbound permission checks, which still use the actual Raven message owner.
+
+## What setup cannot be fully automated
+
+Bootstrap helps with bridge-side records, but you still must complete:
+
+- Meta webhook endpoint and verification setup
+- WhatsApp Cloud API tokens/credentials
+- Template approval and template lifecycle in Meta

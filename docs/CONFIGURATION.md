@@ -20,8 +20,9 @@ Configure apps in this order.
 Open **WhatsApp Raven Bridge Settings** and set:
 
 - `enabled` = 1
+- `bridge_system_user` (recommended production service user for bridge-created infra audit)
 - `bridge_raven_bot`
-- `bridge_raven_user`
+- `bridge_raven_user` (sender identity for inbound mirrored Raven messages)
 - `enable_outbound_replies` = 1 for two-way text sync
 - optional fallback defaults:
   - `default_raven_workspace`
@@ -43,3 +44,26 @@ Create one route per WhatsApp account in **WhatsApp Raven Account Route**:
   - `can_reply`
 
 Route memberships control visibility and outbound permissions.
+
+## 5) Bootstrap Alternative (Optional)
+
+You can create/update most settings, routes, workspace, bot, and memberships with:
+
+```python
+frappe.call("whatsapp_raven_bridge.api.setup.bootstrap_whatsapp_raven_bridge", ...)
+```
+
+Use:
+
+```python
+frappe.call("whatsapp_raven_bridge.api.setup.get_setup_status")
+```
+
+to inspect configuration completeness.
+
+## Production Recommendation
+
+- One route per WhatsApp Account
+- `Thread Per Contact` strategy
+- Explicit route members
+- Enable `can_reply` only for agents allowed to send WhatsApp replies
