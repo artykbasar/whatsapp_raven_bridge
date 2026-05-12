@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from contextlib import nullcontext
 
 import frappe
 from frappe import _
@@ -38,7 +39,7 @@ def get_default_route():
 	return frappe.get_doc(ROUTE_DOCTYPE, route_name) if route_name else None
 
 
-def get_or_create_inbox_channel(route):
+def get_or_create_inbox_channel(route, use_bridge_context: bool = True):
 	"""Return the route inbox channel, creating/reusing one when missing."""
 	route_doc = _get_route_doc(route)
 
@@ -65,7 +66,8 @@ def get_or_create_inbox_channel(route):
 	if channel_id:
 		channel = frappe.get_doc("Raven Channel", channel_id)
 	else:
-		with bridge_user_context():
+		ctx = bridge_user_context() if use_bridge_context else nullcontext()
+		with ctx:
 			channel = frappe.get_doc(
 				{
 					"doctype": "Raven Channel",
@@ -77,17 +79,18 @@ def get_or_create_inbox_channel(route):
 			channel.flags.do_not_add_member = True
 			channel.insert(ignore_permissions=True)
 
-	with bridge_user_context():
+	ctx = bridge_user_context() if use_bridge_context else nullcontext()
+	with ctx:
 		route_doc.inbox_channel = channel.name
 		route_doc.inbox_channel_name = channel.channel_name
 		route_doc.save(ignore_permissions=True)
 	return channel
 
 
-def ensure_route_memberships(route):
+def ensure_route_memberships(route, use_bridge_context: bool = True):
 	"""Ensure route members can see route workspace + inbox channel."""
 	route_doc = _get_route_doc(route)
-	channel = get_or_create_inbox_channel(route_doc)
+	channel = get_or_create_inbox_channel(route_doc, use_bridge_context=use_bridge_context)
 
 	from whatsapp_raven_bridge.bridge.raven_destination import ensure_channel_member, ensure_workspace_member
 
@@ -103,8 +106,18 @@ def ensure_route_memberships(route):
 	for row in members.values():
 		raven_user = row.raven_user
 		is_admin = cint(row.get("is_admin"))
-		ensure_workspace_member(route_doc.raven_workspace, raven_user, is_admin=is_admin)
-		ensure_channel_member(channel.name, raven_user, is_admin=is_admin)
+		ensure_workspace_member(
+			route_doc.raven_workspace,
+			raven_user,
+			is_admin=is_admin,
+			use_bridge_context=use_bridge_context,
+		)
+		ensure_channel_member(
+			channel.name,
+			raven_user,
+			is_admin=is_admin,
+			use_bridge_context=use_bridge_context,
+		)
 
 	return channel
 

@@ -403,6 +403,59 @@ class TestSetupBootstrapAndServiceUser(IntegrationTestCase):
 		self.assertTrue(cstr(settings.bridge_system_user).strip())
 		self.assertTrue(frappe.db.exists("User", settings.bridge_system_user))
 
+	def test_bootstrap_dialog_with_missing_default_service_user_and_empty_settings(self):
+		self._force_set_bridge_system_user(None)
+		if frappe.db.exists("User", DEFAULT_BRIDGE_SYSTEM_USER_EMAIL):
+			frappe.delete_doc("User", DEFAULT_BRIDGE_SYSTEM_USER_EMAIL, force=True)
+		frappe.db.commit()
+
+		result = bootstrap_from_settings_dialog(
+			workspace_name=self.WORKSPACE_NAME,
+			bridge_bot_name=self.BOT_NAME,
+			whatsapp_account=self.ACCOUNT_NAME,
+			primary_raven_user="Administrator",
+			conversation_strategy="Thread Per Contact",
+			channel_type="Private",
+			enable_outbound_replies=1,
+		)
+
+		self.assertTrue(result.get("settings_updated"))
+		settings = frappe.get_single("WhatsApp Raven Bridge Settings")
+		self.assertEqual(settings.bridge_system_user, DEFAULT_BRIDGE_SYSTEM_USER_EMAIL)
+		self.assertTrue(frappe.db.exists("User", DEFAULT_BRIDGE_SYSTEM_USER_EMAIL))
+
+	def test_bootstrap_runs_as_setup_actor_without_switching_session_user(self):
+		self._force_set_bridge_system_user(None)
+		if frappe.db.exists("User", DEFAULT_BRIDGE_SYSTEM_USER_EMAIL):
+			frappe.delete_doc("User", DEFAULT_BRIDGE_SYSTEM_USER_EMAIL, force=True)
+		frappe.db.commit()
+
+		current_user = frappe.session.user
+		suffix = frappe.generate_hash(length=6)
+		workspace_name = f"{self.WORKSPACE_NAME} Actor {suffix}"
+		bot_name = f"{self.BOT_NAME} Actor {suffix}"
+
+		result = bootstrap_from_settings_dialog(
+			workspace_name=workspace_name,
+			bridge_bot_name=bot_name,
+			whatsapp_account=self.ACCOUNT_NAME,
+			primary_raven_user="Administrator",
+			conversation_strategy="Thread Per Contact",
+			channel_type="Private",
+			enable_outbound_replies=1,
+		)
+
+		self.assertEqual(frappe.session.user, current_user)
+		self.assertEqual(result.get("setup_actor"), current_user)
+
+		workspace = frappe.get_doc("Raven Workspace", result.get("workspace"))
+		route = frappe.get_doc("WhatsApp Raven Account Route", result["routes"][0]["route"])
+		self.assertEqual(workspace.owner, current_user)
+		self.assertEqual(route.owner, current_user)
+		if route.inbox_channel:
+			channel = frappe.get_doc("Raven Channel", route.inbox_channel)
+			self.assertEqual(channel.owner, current_user)
+
 	def test_patch_repairs_empty_bridge_system_user_single(self):
 		self._force_set_bridge_system_user("")
 		if frappe.db.exists("User", DEFAULT_BRIDGE_SYSTEM_USER_EMAIL):
