@@ -24,3 +24,4 @@ Current behavior is text-only two-way sync.
 
 - Routed inbox/thread visibility depends on route memberships.
 - Outbound replies are allowed only for route members with `can_reply=1` (unless route explicitly allows unassigned reply).
+- Bridge infrastructure audit ownership can be shifted to `bridge_system_user`; outbound reply authorization still uses the actual Raven message owner.

@@ -35,3 +35,28 @@ bench --site <site-name> install-app whatsapp_raven_bridge
 bench --site <site-name> migrate
 bench --site <site-name> clear-cache
 ```
+
+## Optional Bootstrap
+
+After at least one WhatsApp Account exists, you can bootstrap bridge setup:
+
+```python
+frappe.call(
+	"whatsapp_raven_bridge.api.setup.bootstrap_whatsapp_raven_bridge",
+	workspace_name="WhatsApp Support",
+	bridge_bot_name="WhatsApp Bridge Bot",
+	bridge_system_user="whatsapp-bridge-service@example.com",
+	whatsapp_accounts=["<whatsapp-account-name>"],
+	route_members=[{"raven_user": "Administrator", "is_admin": 1, "can_reply": 1}],
+	conversation_strategy="Thread Per Contact",
+	channel_type="Private",
+	enable_outbound_replies=1,
+	enable_start_conversation=0,
+)
+```
+
+Check bootstrap/status:
+
+```python
+frappe.call("whatsapp_raven_bridge.api.setup.get_setup_status")
+```

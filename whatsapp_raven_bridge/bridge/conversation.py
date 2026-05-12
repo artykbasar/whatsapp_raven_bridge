@@ -6,7 +6,7 @@ import frappe
 from frappe import _
 
 from whatsapp_raven_bridge.bridge.account_route import get_route_for_whatsapp_account
-from whatsapp_raven_bridge.utils.settings import get_bridge_identity
+from whatsapp_raven_bridge.utils.settings import bridge_user_context, get_bridge_identity
 
 CONVERSATION_DOCTYPE = "WhatsApp Raven Conversation"
 MESSAGE_LINK_DOCTYPE = "WhatsApp Raven Message Link"
@@ -81,7 +81,8 @@ def get_or_create_conversation(
 			"status": "Open",
 		}
 	)
-	conversation.insert(ignore_permissions=True)
+	with bridge_user_context():
+		conversation.insert(ignore_permissions=True)
 	return conversation
 
 
@@ -194,5 +195,6 @@ def _assign_route_to_conversation(conversation, whatsapp_account):
 		updates["conversation_strategy"] = route.conversation_strategy
 
 	if updates:
-		conversation.update(updates)
-		conversation.save(ignore_permissions=True)
+		with bridge_user_context():
+			conversation.update(updates)
+			conversation.save(ignore_permissions=True)

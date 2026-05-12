@@ -13,7 +13,7 @@ from whatsapp_raven_bridge.bridge.account_route import (
 	get_or_create_inbox_channel,
 	get_route_for_whatsapp_account,
 )
-from whatsapp_raven_bridge.utils.settings import get_settings
+from whatsapp_raven_bridge.utils.settings import bridge_user_context, get_settings
 
 CONVERSATION_DOCTYPE = "WhatsApp Raven Conversation"
 RAVEN_CHANNEL_DOCTYPE = "Raven Channel"
@@ -148,7 +148,13 @@ def ensure_thread_destination(conversation, route, settings=None):
 		thread_channel = _create_or_get_thread_channel(parent_message, inbox_channel)
 
 	if not cint(parent_message.is_thread):
-		parent_message.db_set("is_thread", 1, update_modified=False)
+		frappe.db.set_value(
+			RAVEN_MESSAGE_DOCTYPE,
+			parent_message.name,
+			"is_thread",
+			1,
+			update_modified=False,
+		)
 
 	updates = {
 		"account_route": route_doc.name,
@@ -285,8 +291,9 @@ def _find_or_create_conversation_channel(conversation_doc, workspace, channel_ty
 		}
 	)
 	# Prevent Raven from auto-inserting session user as member for bridge-created channels.
-	channel.flags.do_not_add_member = True
-	channel.insert(ignore_permissions=True)
+	with bridge_user_context():
+		channel.flags.do_not_add_member = True
+		channel.insert(ignore_permissions=True)
 	return channel
 
 
@@ -297,7 +304,8 @@ def _save_conversation_updates(conversation_doc, updates):
 			conversation_doc.set(fieldname, value)
 			changed = True
 	if changed:
-		conversation_doc.save(ignore_permissions=True)
+		with bridge_user_context():
+			conversation_doc.save(ignore_permissions=True)
 
 
 def _get_existing_parent_thread_message(conversation_doc):
@@ -340,19 +348,20 @@ def _create_parent_thread_message(conversation_doc, route_doc, settings, inbox_c
 	previous_flag = getattr(frappe.flags, "whatsapp_raven_bridge_syncing", False)
 	try:
 		frappe.flags.whatsapp_raven_bridge_syncing = True
-		return frappe.get_doc(
-			{
-				"doctype": RAVEN_MESSAGE_DOCTYPE,
-				"channel_id": inbox_channel.name,
-				"message_type": "Text",
-				"text": text,
-				"is_bot_message": 1,
-				"bot": settings.get("bridge_raven_user"),
-				"link_doctype": CONVERSATION_DOCTYPE,
-				"link_document": conversation_doc.name,
-				"json": metadata,
-			}
-		).insert(ignore_permissions=True)
+		with bridge_user_context():
+			return frappe.get_doc(
+				{
+					"doctype": RAVEN_MESSAGE_DOCTYPE,
+					"channel_id": inbox_channel.name,
+					"message_type": "Text",
+					"text": text,
+					"is_bot_message": 1,
+					"bot": settings.get("bridge_raven_user"),
+					"link_doctype": CONVERSATION_DOCTYPE,
+					"link_document": conversation_doc.name,
+					"json": metadata,
+				}
+			).insert(ignore_permissions=True)
 	finally:
 		frappe.flags.whatsapp_raven_bridge_syncing = previous_flag
 
@@ -383,17 +392,19 @@ def _create_or_get_thread_channel(parent_message, inbox_channel):
 			"channel_description": cstr(parent_message.content or "")[:140],
 		}
 	)
-	channel.flags.do_not_add_member = True
-	channel.insert(ignore_permissions=True)
+	with bridge_user_context():
+		channel.flags.do_not_add_member = True
+		channel.insert(ignore_permissions=True)
 
 	if not cint(parent_message.is_thread):
-		frappe.db.set_value(
-			RAVEN_MESSAGE_DOCTYPE,
-			parent_message.name,
-			"is_thread",
-			1,
-			update_modified=False,
-		)
+		with bridge_user_context():
+			frappe.db.set_value(
+				RAVEN_MESSAGE_DOCTYPE,
+				parent_message.name,
+				"is_thread",
+				1,
+				update_modified=False,
+			)
 
 	return channel
 
@@ -403,15 +414,47 @@ def ensure_channel_member(channel_id, raven_user, is_admin=0):
 	if not channel_id or not raven_user:
 		return None
 
-	existing = frappe.db.exists(
-		RAVEN_CHANNEL_MEMBER_DOCTYPE,
-		{
-			"channel_id": channel_id,
-			"user_id": raven_user,
-		},
-	)
-	if existing:
-		if cint(is_admin):
+	with bridge_user_context():
+		existing = frappe.db.exists(
+			RAVEN_CHANNEL_MEMBER_DOCTYPE,
+			{
+				"channel_id": channel_id,
+				"user_id": raven_user,
+			},
+		)
+		if existing:
+			if cint(is_admin):
+				frappe.db.set_value(
+					RAVEN_CHANNEL_MEMBER_DOCTYPE,
+					existing,
+					"is_admin",
+					1,
+					update_modified=False,
+				)
+			return frappe.get_doc(RAVEN_CHANNEL_MEMBER_DOCTYPE, existing)
+
+		try:
+			member = frappe.get_doc(
+				{
+					"doctype": RAVEN_CHANNEL_MEMBER_DOCTYPE,
+					"channel_id": channel_id,
+					"user_id": raven_user,
+					"is_admin": cint(is_admin),
+					"last_visit": now_datetime(),
+					"allow_notifications": 1,
+				}
+			).insert(ignore_permissions=True)
+		except frappe.DuplicateEntryError:
+			member = None
+
+		existing = frappe.db.exists(
+			RAVEN_CHANNEL_MEMBER_DOCTYPE,
+			{
+				"channel_id": channel_id,
+				"user_id": raven_user,
+			},
+		)
+		if existing and cint(is_admin):
 			frappe.db.set_value(
 				RAVEN_CHANNEL_MEMBER_DOCTYPE,
 				existing,
@@ -419,38 +462,7 @@ def ensure_channel_member(channel_id, raven_user, is_admin=0):
 				1,
 				update_modified=False,
 			)
-		return frappe.get_doc(RAVEN_CHANNEL_MEMBER_DOCTYPE, existing)
-
-	try:
-		member = frappe.get_doc(
-			{
-				"doctype": RAVEN_CHANNEL_MEMBER_DOCTYPE,
-				"channel_id": channel_id,
-				"user_id": raven_user,
-				"is_admin": cint(is_admin),
-				"last_visit": now_datetime(),
-				"allow_notifications": 1,
-			}
-		).insert(ignore_permissions=True)
-	except frappe.DuplicateEntryError:
-		member = None
-
-	existing = frappe.db.exists(
-		RAVEN_CHANNEL_MEMBER_DOCTYPE,
-		{
-			"channel_id": channel_id,
-			"user_id": raven_user,
-		},
-	)
-	if existing and cint(is_admin):
-		frappe.db.set_value(
-			RAVEN_CHANNEL_MEMBER_DOCTYPE,
-			existing,
-			"is_admin",
-			1,
-			update_modified=False,
-		)
-	return frappe.get_doc(RAVEN_CHANNEL_MEMBER_DOCTYPE, existing) if existing else member
+		return frappe.get_doc(RAVEN_CHANNEL_MEMBER_DOCTYPE, existing) if existing else member
 
 
 def ensure_workspace_member(workspace, raven_user, is_admin=0):
@@ -458,15 +470,45 @@ def ensure_workspace_member(workspace, raven_user, is_admin=0):
 	if not workspace or not raven_user:
 		return None
 
-	existing = frappe.db.exists(
-		RAVEN_WORKSPACE_MEMBER_DOCTYPE,
-		{
-			"workspace": workspace,
-			"user": raven_user,
-		},
-	)
-	if existing:
-		if cint(is_admin):
+	with bridge_user_context():
+		existing = frappe.db.exists(
+			RAVEN_WORKSPACE_MEMBER_DOCTYPE,
+			{
+				"workspace": workspace,
+				"user": raven_user,
+			},
+		)
+		if existing:
+			if cint(is_admin):
+				frappe.db.set_value(
+					RAVEN_WORKSPACE_MEMBER_DOCTYPE,
+					existing,
+					"is_admin",
+					1,
+					update_modified=False,
+				)
+			return frappe.get_doc(RAVEN_WORKSPACE_MEMBER_DOCTYPE, existing)
+
+		try:
+			member = frappe.get_doc(
+				{
+					"doctype": RAVEN_WORKSPACE_MEMBER_DOCTYPE,
+					"workspace": workspace,
+					"user": raven_user,
+					"is_admin": cint(is_admin),
+				}
+			).insert(ignore_permissions=True)
+		except frappe.DuplicateEntryError:
+			member = None
+
+		existing = frappe.db.exists(
+			RAVEN_WORKSPACE_MEMBER_DOCTYPE,
+			{
+				"workspace": workspace,
+				"user": raven_user,
+			},
+		)
+		if existing and cint(is_admin):
 			frappe.db.set_value(
 				RAVEN_WORKSPACE_MEMBER_DOCTYPE,
 				existing,
@@ -474,36 +516,7 @@ def ensure_workspace_member(workspace, raven_user, is_admin=0):
 				1,
 				update_modified=False,
 			)
-		return frappe.get_doc(RAVEN_WORKSPACE_MEMBER_DOCTYPE, existing)
-
-	try:
-		member = frappe.get_doc(
-			{
-				"doctype": RAVEN_WORKSPACE_MEMBER_DOCTYPE,
-				"workspace": workspace,
-				"user": raven_user,
-				"is_admin": cint(is_admin),
-			}
-		).insert(ignore_permissions=True)
-	except frappe.DuplicateEntryError:
-		member = None
-
-	existing = frappe.db.exists(
-		RAVEN_WORKSPACE_MEMBER_DOCTYPE,
-		{
-			"workspace": workspace,
-			"user": raven_user,
-		},
-	)
-	if existing and cint(is_admin):
-		frappe.db.set_value(
-			RAVEN_WORKSPACE_MEMBER_DOCTYPE,
-			existing,
-			"is_admin",
-			1,
-			update_modified=False,
-		)
-	return frappe.get_doc(RAVEN_WORKSPACE_MEMBER_DOCTYPE, existing) if existing else member
+		return frappe.get_doc(RAVEN_WORKSPACE_MEMBER_DOCTYPE, existing) if existing else member
 
 
 def _get_conversation_doc(conversation):

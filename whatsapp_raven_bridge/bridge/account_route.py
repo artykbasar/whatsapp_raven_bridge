@@ -8,7 +8,7 @@ import frappe
 from frappe import _
 from frappe.utils import cint, cstr
 
-from whatsapp_raven_bridge.utils.settings import get_settings
+from whatsapp_raven_bridge.utils.settings import bridge_user_context, get_settings
 
 ROUTE_DOCTYPE = "WhatsApp Raven Account Route"
 
@@ -65,20 +65,22 @@ def get_or_create_inbox_channel(route):
 	if channel_id:
 		channel = frappe.get_doc("Raven Channel", channel_id)
 	else:
-		channel = frappe.get_doc(
-			{
-				"doctype": "Raven Channel",
-				"type": route_doc.channel_type or "Private",
-				"workspace": route_doc.raven_workspace,
-				"channel_name": channel_name,
-			}
-		)
-		channel.flags.do_not_add_member = True
-		channel.insert(ignore_permissions=True)
+		with bridge_user_context():
+			channel = frappe.get_doc(
+				{
+					"doctype": "Raven Channel",
+					"type": route_doc.channel_type or "Private",
+					"workspace": route_doc.raven_workspace,
+					"channel_name": channel_name,
+				}
+			)
+			channel.flags.do_not_add_member = True
+			channel.insert(ignore_permissions=True)
 
-	route_doc.inbox_channel = channel.name
-	route_doc.inbox_channel_name = channel.channel_name
-	route_doc.save(ignore_permissions=True)
+	with bridge_user_context():
+		route_doc.inbox_channel = channel.name
+		route_doc.inbox_channel_name = channel.channel_name
+		route_doc.save(ignore_permissions=True)
 	return channel
 
 
