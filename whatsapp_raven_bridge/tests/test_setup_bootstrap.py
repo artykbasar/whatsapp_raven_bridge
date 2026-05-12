@@ -123,15 +123,18 @@ class TestSetupBootstrapAndServiceUser(IntegrationTestCase):
 		self._force_set_bridge_system_user(None)
 		frappe.db.commit()
 
-		user_name = ensure_default_bridge_system_user()
+		ensured = ensure_default_bridge_system_user()
+		user_name = ensured.get("user")
 		self.assertTrue(user_name)
 		self.assertTrue(frappe.db.exists("User", user_name))
+		self.assertIn("created", ensured)
+		self.assertIn("settings_updated", ensured)
 
 		settings.reload()
 		self.assertEqual(settings.bridge_system_user, user_name)
 		self.assertEqual(int(settings.enabled), 0)
 
-		user_name_again = ensure_default_bridge_system_user()
+		user_name_again = ensure_default_bridge_system_user().get("user")
 		self.assertEqual(user_name_again, user_name)
 
 	def test_bootstrap_without_bridge_system_user_uses_default_service_user(self):
@@ -195,7 +198,7 @@ class TestSetupBootstrapAndServiceUser(IntegrationTestCase):
 		self._force_set_bridge_system_user(stale_value)
 		frappe.db.commit()
 
-		user_name = ensure_default_bridge_system_user()
+		user_name = ensure_default_bridge_system_user().get("user")
 		self.assertEqual(user_name, stale_value)
 		settings = frappe.get_single("WhatsApp Raven Bridge Settings")
 		settings.reload()
@@ -227,9 +230,54 @@ class TestSetupBootstrapAndServiceUser(IntegrationTestCase):
 		settings.save(ignore_permissions=True)
 		frappe.db.commit()
 
-		user_name = ensure_default_bridge_system_user()
+		user_name = ensure_default_bridge_system_user().get("user")
 		self.assertEqual(user_name, disabled_email)
 		self.assertTrue(frappe.db.exists("User", {"name": disabled_email, "enabled": 1}))
+
+	def test_bridge_system_user_field_is_optional_link_user(self):
+		meta = frappe.get_meta("WhatsApp Raven Bridge Settings")
+		field = meta.get_field("bridge_system_user")
+		self.assertEqual(field.fieldtype, "Link")
+		self.assertEqual(field.options, "User")
+		self.assertFalse(bool(int(field.reqd or 0)))
+
+	def test_bootstrap_from_settings_dialog_without_bridge_system_user_uses_default_path(self):
+		self._force_set_bridge_system_user(None)
+		frappe.db.commit()
+
+		result = bootstrap_from_settings_dialog(
+			workspace_name=self.WORKSPACE_NAME,
+			bridge_bot_name=self.BOT_NAME,
+			bridge_system_user="",
+			whatsapp_account=self.ACCOUNT_NAME,
+			primary_raven_user="Administrator",
+			conversation_strategy="Thread Per Contact",
+			channel_type="Private",
+			enable_outbound_replies=1,
+		)
+		self.assertTrue(result.get("settings_updated"))
+		settings = frappe.get_single("WhatsApp Raven Bridge Settings")
+		self.assertTrue(cstr(settings.bridge_system_user).strip())
+		self.assertTrue(frappe.db.exists("User", settings.bridge_system_user))
+
+	def test_bootstrap_from_settings_dialog_with_existing_bridge_system_user(self):
+		ensured = ensure_default_bridge_system_user()
+		service_user = ensured.get("user")
+		self.assertTrue(service_user)
+
+		result = bootstrap_from_settings_dialog(
+			workspace_name=self.WORKSPACE_NAME,
+			bridge_bot_name=self.BOT_NAME,
+			bridge_system_user=service_user,
+			whatsapp_account=self.ACCOUNT_NAME,
+			primary_raven_user="Administrator",
+			conversation_strategy="Thread Per Contact",
+			channel_type="Private",
+			enable_outbound_replies=1,
+		)
+		self.assertTrue(result.get("settings_updated"))
+		settings = frappe.get_single("WhatsApp Raven Bridge Settings")
+		self.assertEqual(settings.bridge_system_user, service_user)
 
 	def test_setup_status_warns_for_missing_configured_bridge_system_user(self):
 		self._force_set_bridge_system_user("warbh-status-missing@example.com")
@@ -239,7 +287,7 @@ class TestSetupBootstrapAndServiceUser(IntegrationTestCase):
 		self.assertFalse(status.get("has_bridge_system_user"))
 		self.assertTrue(
 			any(
-				"Configured Bridge System User does not exist and will be recreated by bootstrap."
+				"Configured Bridge System User does not exist. Setup can recreate it."
 				in cstr(warning)
 				for warning in status.get("warnings", [])
 			)

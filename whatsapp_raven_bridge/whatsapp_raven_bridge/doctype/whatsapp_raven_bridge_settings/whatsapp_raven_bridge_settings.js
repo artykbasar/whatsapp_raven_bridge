@@ -8,8 +8,12 @@ frappe.ui.form.on("WhatsApp Raven Bridge Settings", {
 			await show_setup_status();
 		});
 
+		frm.add_custom_button(__("Create / Use Default Bridge System User"), async () => {
+			await create_or_use_default_bridge_system_user(frm);
+		});
+
 		frm.add_custom_button(__("Run Bootstrap Setup"), async () => {
-			await open_bootstrap_dialog();
+			await open_bootstrap_dialog(frm);
 		});
 	},
 });
@@ -58,12 +62,39 @@ async function show_setup_status() {
 	});
 }
 
-async function open_bootstrap_dialog() {
+async function create_or_use_default_bridge_system_user(frm) {
+	frappe.dom.freeze(__("Ensuring default Bridge System User..."));
+	try {
+		const response = await frappe.call({
+			method: "whatsapp_raven_bridge.api.setup.ensure_default_bridge_system_user",
+		});
+		const message = response.message || {};
+		if (!message.user) {
+			frappe.throw(__("Could not ensure default Bridge System User."));
+		}
+
+		await frm.set_value("bridge_system_user", message.user);
+		await frm.save();
+
+		frappe.msgprint({
+			title: __("Bridge System User Ready"),
+			message: __(
+				"Using {0} (created: {1}).",
+				[frappe.utils.escape_html(message.user), message.created ? __("Yes") : __("No")]
+			),
+		});
+	} finally {
+		frappe.dom.unfreeze();
+	}
+}
+
+async function open_bootstrap_dialog(frm) {
 	const default_raven_user = await get_current_session_raven_user();
 	const status = await frappe.call({
 		method: "whatsapp_raven_bridge.api.setup.get_setup_status",
 	});
 	const has_whatsapp_account = !!status?.message?.has_whatsapp_account;
+	const valid_bridge_system_user = status?.message?.has_bridge_system_user ? frm.doc.bridge_system_user : "";
 
 	const dialog = new frappe.ui.Dialog({
 		title: __("Run Bootstrap Setup"),
@@ -85,8 +116,9 @@ async function open_bootstrap_dialog() {
 			{
 				fieldname: "bridge_system_user",
 				label: __("Bridge System User"),
-				fieldtype: "Data",
-				default: "whatsapp.bridge@example.com",
+				fieldtype: "Link",
+				options: "User",
+				default: valid_bridge_system_user || "",
 			},
 			{
 				fieldname: "whatsapp_account",
@@ -138,10 +170,22 @@ async function open_bootstrap_dialog() {
 			frappe.dom.freeze(__("Running bridge bootstrap..."));
 
 			try {
+				if (!values.bridge_system_user) {
+					const ensured = await frappe.call({
+						method: "whatsapp_raven_bridge.api.setup.ensure_default_bridge_system_user",
+					});
+					values.bridge_system_user = ensured?.message?.user || "";
+					if (!values.bridge_system_user) {
+						frappe.throw(__("Could not ensure default Bridge System User."));
+					}
+					await frm.set_value("bridge_system_user", values.bridge_system_user);
+				}
+
 				const response = await frappe.call({
 					method: "whatsapp_raven_bridge.api.setup.bootstrap_from_settings_dialog",
 					args: values,
 				});
+				await frm.reload_doc();
 				show_bootstrap_summary(response.message || {});
 			} finally {
 				frappe.dom.unfreeze();

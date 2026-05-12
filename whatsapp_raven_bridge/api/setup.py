@@ -18,50 +18,58 @@ from whatsapp_raven_bridge.utils.settings import bridge_user_context, get_settin
 DEFAULT_BRIDGE_SYSTEM_USER_EMAIL = "whatsapp.bridge@example.com"
 
 
-def ensure_default_bridge_system_user(default_email: str | None = None) -> str | None:
-	"""Create/reuse default Bridge System User and set settings field when empty.
-
-	Safe during install/migrate. This helper intentionally does not enable the bridge
-	and does not create routes.
-	"""
+def _ensure_default_bridge_system_user_state(default_email: str | None = None) -> frappe._dict:
+	"""Internal helper to ensure a valid bridge system user and settings link."""
 	default_email = cstr(default_email or DEFAULT_BRIDGE_SYSTEM_USER_EMAIL).strip().lower()
+	result = frappe._dict({"user": None, "created": False, "settings_updated": False})
 	if not default_email:
-		return None
+		return result
 
 	try:
 		if not frappe.db.exists("DocType", "WhatsApp Raven Bridge Settings"):
-			return None
+			return result
 		if not frappe.db.table_exists("User"):
-			return None
+			return result
 	except Exception:
-		return None
+		return result
 
 	settings = get_settings()
 	if not settings:
-		return None
+		return result
 
 	configured = cstr(settings.get("bridge_system_user") or "").strip()
-
 	candidates = []
 	if configured:
 		candidates.append(configured)
 	if default_email and default_email not in candidates:
 		candidates.append(default_email)
 
-	user_name = None
+	user_info = None
 	for candidate in candidates:
-		user_name = _ensure_bridge_system_user(candidate)
-		if user_name:
+		user_info = _ensure_bridge_system_user_with_state(candidate)
+		if user_info and user_info.user:
 			break
-	if not user_name:
-		return None
+
+	if not user_info or not user_info.user:
+		return result
+
+	result.user = user_info.user
+	result.created = bool(user_info.created)
 
 	with bridge_user_context():
-		if settings.bridge_system_user != user_name:
-			settings.bridge_system_user = user_name
+		if settings.bridge_system_user != result.user:
+			settings.bridge_system_user = result.user
 			settings.save(ignore_permissions=True)
+			result.settings_updated = True
 
-	return user_name
+	return result
+
+
+@frappe.whitelist()
+def ensure_default_bridge_system_user(default_email: str | None = None) -> dict[str, Any]:
+	"""Create/reuse default Bridge System User and persist a valid Link in settings."""
+	_require_setup_permission()
+	return dict(_ensure_default_bridge_system_user_state(default_email=default_email))
 
 
 def _require_setup_permission() -> None:
@@ -255,6 +263,11 @@ def bootstrap_from_settings_dialog(
 	"""Dialog-friendly wrapper around bootstrap_whatsapp_raven_bridge."""
 	_require_setup_permission()
 
+	bridge_system_user_value = cstr(bridge_system_user).strip() or None
+	if not bridge_system_user_value:
+		ensured = _ensure_default_bridge_system_user_state()
+		bridge_system_user_value = cstr(ensured.get("user") or "").strip() or None
+
 	accounts: list[str] = []
 	if cstr(whatsapp_account).strip():
 		accounts = [cstr(whatsapp_account).strip()]
@@ -272,7 +285,7 @@ def bootstrap_from_settings_dialog(
 	return bootstrap_whatsapp_raven_bridge(
 		workspace_name=workspace_name,
 		bridge_bot_name=bridge_bot_name,
-		bridge_system_user=cstr(bridge_system_user).strip() or None,
+		bridge_system_user=bridge_system_user_value,
 		whatsapp_accounts=accounts,
 		route_members=route_members,
 		enable_outbound_replies=enable_outbound_replies,
@@ -312,7 +325,7 @@ def get_setup_status() -> dict[str, Any]:
 		status.has_bridge_system_user = bool(system_user and _is_enabled_user(system_user))
 		if system_user and not status.has_bridge_system_user:
 			status.warnings.append(
-				_("Configured Bridge System User does not exist and will be recreated by bootstrap.")
+				_("Configured Bridge System User does not exist. Setup can recreate it.")
 			)
 	else:
 		status.warnings.append(_("WhatsApp Raven Bridge Settings is missing."))
@@ -339,8 +352,10 @@ def get_setup_status() -> dict[str, Any]:
 		status.warnings.append(_("No Raven Workspace found."))
 	if not status.has_raven_bot:
 		status.warnings.append(_("No Raven Bot found."))
-	if not status.has_bridge_system_user:
-		status.warnings.append(_("Bridge System User is not configured or not enabled."))
+	if not cstr(settings.get("bridge_system_user") if settings else "").strip():
+		status.warnings.append(
+			_("Bridge System User is not configured. Click Create / Use Default Bridge System User or run bootstrap.")
+		)
 	if status.number_of_routes == 0:
 		status.warnings.append(_("No WhatsApp Raven Account Route records found."))
 	if status.routes_missing_members:
@@ -375,9 +390,15 @@ def _coerce_list(value: Any) -> list[Any]:
 
 
 def _ensure_bridge_system_user(user_identifier: str | None) -> str | None:
+	user_info = _ensure_bridge_system_user_with_state(user_identifier)
+	return cstr(user_info.get("user") or "").strip() or None
+
+
+def _ensure_bridge_system_user_with_state(user_identifier: str | None) -> frappe._dict:
 	user_identifier = cstr(user_identifier or "").strip()
+	result = frappe._dict({"user": None, "created": False})
 	if not user_identifier:
-		return None
+		return result
 
 	existing_user_name = None
 	if frappe.db.exists("User", user_identifier):
@@ -393,7 +414,8 @@ def _ensure_bridge_system_user(user_identifier: str | None) -> str | None:
 			with bridge_user_context():
 				user_doc.enabled = 1
 				user_doc.save(ignore_permissions=True)
-		return user_doc.name
+		result.user = user_doc.name
+		return result
 
 	email = user_identifier if "@" in user_identifier else f"{user_identifier}@local.invalid"
 
@@ -410,7 +432,9 @@ def _ensure_bridge_system_user(user_identifier: str | None) -> str | None:
 					"user_type": "System User",
 				}
 			).insert(ignore_permissions=True)
-		return user_doc.name
+		result.user = user_doc.name
+		result.created = True
+		return result
 	except Exception:
 		# Handle race where another process created it in parallel.
 		existing_user_name = frappe.db.get_value("User", {"email": email}, "name")
@@ -420,8 +444,9 @@ def _ensure_bridge_system_user(user_identifier: str | None) -> str | None:
 				with bridge_user_context():
 					user_doc.enabled = 1
 					user_doc.save(ignore_permissions=True)
-			return user_doc.name
-		return None
+			result.user = user_doc.name
+			return result
+		return result
 
 
 def _is_enabled_user(user_name: str | None) -> bool:

@@ -24,7 +24,7 @@
    "label": "Enabled"
   },
   {
-   "description": "Frappe user used as audit actor for bridge-created channels, threads, memberships, and bridge infrastructure.",
+   "description": "Optional. Frappe user used as audit actor for bridge-created channels, threads, memberships, and bridge infrastructure. Setup can auto-create the default service user.",
    "fieldname": "bridge_system_user",
    "fieldtype": "Link",
    "label": "Bridge System User",
