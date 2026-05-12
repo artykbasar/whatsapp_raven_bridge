@@ -8,10 +8,6 @@ frappe.ui.form.on("WhatsApp Raven Bridge Settings", {
 			await show_setup_status();
 		});
 
-		frm.add_custom_button(__("Create / Use Default Bridge System User"), async () => {
-			await create_or_use_default_bridge_system_user(frm);
-		});
-
 		frm.add_custom_button(__("Run Bootstrap Setup"), async () => {
 			await open_bootstrap_dialog(frm);
 		});
@@ -60,32 +56,6 @@ async function show_setup_status() {
 		message: `${table_html}<h5>${__("Warnings")}</h5>${warning_html}`,
 		wide: true,
 	});
-}
-
-async function create_or_use_default_bridge_system_user(frm) {
-	frappe.dom.freeze(__("Ensuring default Bridge System User..."));
-	try {
-		const response = await frappe.call({
-			method: "whatsapp_raven_bridge.api.setup.ensure_default_bridge_system_user",
-		});
-		const message = response.message || {};
-		if (!message.user) {
-			frappe.throw(__("Could not ensure default Bridge System User."));
-		}
-
-		await frm.set_value("bridge_system_user", message.user);
-		await frm.save();
-
-		frappe.msgprint({
-			title: __("Bridge System User Ready"),
-			message: __(
-				"Using {0} (created: {1}).",
-				[frappe.utils.escape_html(message.user), message.created ? __("Yes") : __("No")]
-			),
-		});
-	} finally {
-		frappe.dom.unfreeze();
-	}
 }
 
 async function open_bootstrap_dialog(frm) {
@@ -170,17 +140,6 @@ async function open_bootstrap_dialog(frm) {
 			frappe.dom.freeze(__("Running bridge bootstrap..."));
 
 			try {
-				if (!values.bridge_system_user) {
-					const ensured = await frappe.call({
-						method: "whatsapp_raven_bridge.api.setup.ensure_default_bridge_system_user",
-					});
-					values.bridge_system_user = ensured?.message?.user || "";
-					if (!values.bridge_system_user) {
-						frappe.throw(__("Could not ensure default Bridge System User."));
-					}
-					await frm.set_value("bridge_system_user", values.bridge_system_user);
-				}
-
 				const response = await frappe.call({
 					method: "whatsapp_raven_bridge.api.setup.bootstrap_from_settings_dialog",
 					args: values,

@@ -52,6 +52,10 @@ Go to **WhatsApp Raven Bridge Settings** and use:
 - **Check Setup Status**
 - **Run Bootstrap Setup**
 
+`bridge_system_user` is optional. If left blank, saving settings auto-creates and assigns
+`whatsapp.bridge@example.com`.
+This user is for audit attribution only; inbound mirrored messages still use `bridge_raven_user`.
+
 ### B) CLI / Bench
 
 Run bootstrap from bench execute or bench console.

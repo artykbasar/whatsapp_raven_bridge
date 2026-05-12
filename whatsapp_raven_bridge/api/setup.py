@@ -18,7 +18,9 @@ from whatsapp_raven_bridge.utils.settings import bridge_user_context, get_settin
 DEFAULT_BRIDGE_SYSTEM_USER_EMAIL = "whatsapp.bridge@example.com"
 
 
-def _ensure_default_bridge_system_user_state(default_email: str | None = None) -> frappe._dict:
+def _ensure_default_bridge_system_user_state(
+	default_email: str | None = None, update_settings: bool = True
+) -> frappe._dict:
 	"""Internal helper to ensure a valid bridge system user and settings link."""
 	default_email = cstr(default_email or DEFAULT_BRIDGE_SYSTEM_USER_EMAIL).strip().lower()
 	result = frappe._dict({"user": None, "created": False, "settings_updated": False})
@@ -56,20 +58,28 @@ def _ensure_default_bridge_system_user_state(default_email: str | None = None) -
 	result.user = user_info.user
 	result.created = bool(user_info.created)
 
-	with bridge_user_context():
-		if settings.bridge_system_user != result.user:
-			settings.bridge_system_user = result.user
-			settings.save(ignore_permissions=True)
-			result.settings_updated = True
+	if update_settings:
+		with bridge_user_context():
+			if settings.bridge_system_user != result.user:
+				settings.bridge_system_user = result.user
+				settings.save(ignore_permissions=True)
+				result.settings_updated = True
 
 	return result
 
 
 @frappe.whitelist()
-def ensure_default_bridge_system_user(default_email: str | None = None) -> dict[str, Any]:
+def ensure_default_bridge_system_user(
+	default_email: str | None = None, update_settings: bool = True
+) -> dict[str, Any]:
 	"""Create/reuse default Bridge System User and persist a valid Link in settings."""
 	_require_setup_permission()
-	return dict(_ensure_default_bridge_system_user_state(default_email=default_email))
+	return dict(
+		_ensure_default_bridge_system_user_state(
+			default_email=default_email,
+			update_settings=bool(cint(update_settings)),
+		)
+	)
 
 
 def _require_setup_permission() -> None:
@@ -264,9 +274,6 @@ def bootstrap_from_settings_dialog(
 	_require_setup_permission()
 
 	bridge_system_user_value = cstr(bridge_system_user).strip() or None
-	if not bridge_system_user_value:
-		ensured = _ensure_default_bridge_system_user_state()
-		bridge_system_user_value = cstr(ensured.get("user") or "").strip() or None
 
 	accounts: list[str] = []
 	if cstr(whatsapp_account).strip():
@@ -354,7 +361,9 @@ def get_setup_status() -> dict[str, Any]:
 		status.warnings.append(_("No Raven Bot found."))
 	if not cstr(settings.get("bridge_system_user") if settings else "").strip():
 		status.warnings.append(
-			_("Bridge System User is not configured. Click Create / Use Default Bridge System User or run bootstrap.")
+			_(
+				"Bridge System User is not configured. Save settings empty to auto-create it, or run bootstrap."
+			)
 		)
 	if status.number_of_routes == 0:
 		status.warnings.append(_("No WhatsApp Raven Account Route records found."))

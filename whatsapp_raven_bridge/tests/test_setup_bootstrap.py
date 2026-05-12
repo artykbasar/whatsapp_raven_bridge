@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import frappe
+from frappe.exceptions import ValidationError
 from frappe.tests import IntegrationTestCase
 from frappe.utils import cstr
 from frappe.utils.password import set_encrypted_password
@@ -240,6 +241,98 @@ class TestSetupBootstrapAndServiceUser(IntegrationTestCase):
 		self.assertEqual(field.fieldtype, "Link")
 		self.assertEqual(field.options, "User")
 		self.assertFalse(bool(int(field.reqd or 0)))
+
+	def test_settings_save_with_empty_bridge_system_user_auto_creates_default(self):
+		settings = frappe.get_single("WhatsApp Raven Bridge Settings")
+		settings.bridge_system_user = ""
+		settings.save(ignore_permissions=True)
+		settings.reload()
+
+		self.assertEqual(settings.bridge_system_user, DEFAULT_BRIDGE_SYSTEM_USER_EMAIL)
+		self.assertTrue(frappe.db.exists("User", DEFAULT_BRIDGE_SYSTEM_USER_EMAIL))
+
+	def test_settings_save_with_existing_bridge_system_user_keeps_value(self):
+		ensure_default_bridge_system_user(default_email=self.SYSTEM_USER_EMAIL)
+		settings = frappe.get_single("WhatsApp Raven Bridge Settings")
+		settings.bridge_system_user = self.SYSTEM_USER_EMAIL
+		settings.save(ignore_permissions=True)
+		settings.reload()
+
+		self.assertEqual(settings.bridge_system_user, self.SYSTEM_USER_EMAIL)
+
+	def test_settings_save_with_missing_email_bridge_system_user_creates_user(self):
+		missing_email = "warbh-created-from-settings@example.com"
+		if frappe.db.exists("User", missing_email):
+			frappe.delete_doc("User", missing_email, force=True)
+
+		settings = frappe.get_single("WhatsApp Raven Bridge Settings")
+		settings.bridge_system_user = missing_email
+		settings.save(ignore_permissions=True)
+		settings.reload()
+
+		self.assertEqual(settings.bridge_system_user, missing_email)
+		self.assertTrue(frappe.db.exists("User", missing_email))
+
+	def test_settings_save_with_missing_non_email_bridge_system_user_throws(self):
+		settings = frappe.get_single("WhatsApp Raven Bridge Settings")
+		settings.bridge_system_user = "warbh-missing-service-user"
+
+		with self.assertRaises(ValidationError):
+			settings.save(ignore_permissions=True)
+
+	def test_settings_save_reenables_disabled_bridge_system_user(self):
+		disabled_email = "warbh-disabled-on-save@example.com"
+		if frappe.db.exists("User", disabled_email):
+			user_doc = frappe.get_doc("User", disabled_email)
+		else:
+			user_doc = frappe.get_doc(
+				{
+					"doctype": "User",
+					"email": disabled_email,
+					"first_name": "WARBH",
+					"last_name": "Disabled Save",
+					"enabled": 1,
+					"user_type": "System User",
+					"send_welcome_email": 0,
+				}
+			).insert(ignore_permissions=True)
+		user_doc.enabled = 0
+		user_doc.save(ignore_permissions=True)
+
+		settings = frappe.get_single("WhatsApp Raven Bridge Settings")
+		settings.bridge_system_user = disabled_email
+		settings.save(ignore_permissions=True)
+		settings.reload()
+
+		self.assertEqual(settings.bridge_system_user, disabled_email)
+		self.assertTrue(frappe.db.exists("User", {"name": disabled_email, "enabled": 1}))
+
+	def test_ensure_default_bridge_system_user_update_settings_false_does_not_save_settings(self):
+		self._force_set_bridge_system_user(None)
+		frappe.db.commit()
+
+		result = ensure_default_bridge_system_user(update_settings=False)
+		self.assertEqual(result.get("user"), DEFAULT_BRIDGE_SYSTEM_USER_EMAIL)
+		self.assertFalse(bool(result.get("settings_updated")))
+
+		settings = frappe.get_single("WhatsApp Raven Bridge Settings")
+		settings.reload()
+		self.assertFalse(cstr(settings.bridge_system_user).strip())
+
+	def test_settings_js_has_no_create_bridge_system_user_button(self):
+		js_path = frappe.get_app_path(
+			"whatsapp_raven_bridge",
+			"whatsapp_raven_bridge",
+			"doctype",
+			"whatsapp_raven_bridge_settings",
+			"whatsapp_raven_bridge_settings.js",
+		)
+		with open(js_path, encoding="utf-8") as handle:
+			js = handle.read()
+
+		self.assertNotIn("Create / Use Default Bridge System User", js)
+		self.assertIn("Check Setup Status", js)
+		self.assertIn("Run Bootstrap Setup", js)
 
 	def test_bootstrap_from_settings_dialog_without_bridge_system_user_uses_default_path(self):
 		self._force_set_bridge_system_user(None)

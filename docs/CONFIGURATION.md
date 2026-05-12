@@ -20,7 +20,7 @@ Configure apps in this order.
 Open **WhatsApp Raven Bridge Settings** and set:
 
 - `enabled` = 1
-- `bridge_system_user` (recommended production service user for bridge-created infra audit)
+- `bridge_system_user` (optional custom service user for bridge-created infra audit)
 - `bridge_raven_bot`
 - `bridge_raven_user` (sender identity for inbound mirrored Raven messages)
 - `enable_outbound_replies` = 1 for two-way text sync
@@ -30,9 +30,10 @@ Open **WhatsApp Raven Bridge Settings** and set:
   - `default_whatsapp_account`
   - `conversation_strategy`
 
-Install default behavior:
+Install/default behavior:
 
-- Bridge seeds a default `bridge_system_user` (`whatsapp.bridge@example.com`) when empty.
+- If `bridge_system_user` is blank, saving settings auto-creates and assigns
+  `whatsapp.bridge@example.com`.
 - Bridge remains disabled until you explicitly enable it.
 
 ## 4) Configure WhatsApp Raven Account Route
