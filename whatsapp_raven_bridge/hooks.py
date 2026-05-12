@@ -86,7 +86,7 @@ required_apps = ["frappe_whatsapp", "raven"]
 # ------------
 
 # before_install = "whatsapp_raven_bridge.install.before_install"
-# after_install = "whatsapp_raven_bridge.install.after_install"
+after_install = "whatsapp_raven_bridge.install.after_install"
 
 # Uninstallation
 # ------------

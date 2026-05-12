@@ -14,6 +14,51 @@ from whatsapp_raven_bridge.bridge.account_route import (
 )
 from whatsapp_raven_bridge.utils.settings import bridge_user_context, get_settings
 
+DEFAULT_BRIDGE_SYSTEM_USER_EMAIL = "whatsapp.bridge@example.com"
+
+
+def ensure_default_bridge_system_user(default_email: str | None = None) -> str | None:
+	"""Create/reuse default Bridge System User and set settings field when empty.
+
+	Safe during install/migrate. This helper intentionally does not enable the bridge
+	and does not create routes.
+	"""
+	default_email = cstr(default_email or DEFAULT_BRIDGE_SYSTEM_USER_EMAIL).strip().lower()
+	if not default_email:
+		return None
+
+	try:
+		if not frappe.db.exists("DocType", "WhatsApp Raven Bridge Settings"):
+			return None
+		if not frappe.db.table_exists("User"):
+			return None
+	except Exception:
+		return None
+
+	settings = get_settings()
+	if not settings:
+		return None
+
+	if cstr(settings.get("bridge_system_user") or "").strip():
+		return settings.get("bridge_system_user")
+
+	user_name = _ensure_bridge_system_user(default_email)
+	if not user_name:
+		return None
+
+	with bridge_user_context():
+		settings.bridge_system_user = user_name
+		settings.save(ignore_permissions=True)
+
+	return user_name
+
+
+def _require_setup_permission() -> None:
+	"""Allow bootstrap operations only for privileged setup users."""
+	if frappe.session.user == "Administrator":
+		return
+	frappe.only_for("System Manager")
+
 
 @frappe.whitelist()
 def bootstrap_whatsapp_raven_bridge(
@@ -28,6 +73,8 @@ def bootstrap_whatsapp_raven_bridge(
 	channel_type: str = "Private",
 ) -> dict[str, Any]:
 	"""Create or reuse minimal bridge configuration for production setup."""
+	_require_setup_permission()
+
 	summary = frappe._dict(
 		{
 			"settings_updated": False,
@@ -163,6 +210,50 @@ def bootstrap_whatsapp_raven_bridge(
 	}
 
 	return summary
+
+
+@frappe.whitelist()
+def bootstrap_from_settings_dialog(
+	workspace_name: str | None = None,
+	bridge_bot_name: str | None = None,
+	bridge_system_user: str | None = None,
+	whatsapp_account: str | None = None,
+	primary_raven_user: str | None = None,
+	conversation_strategy: str = "Thread Per Contact",
+	channel_type: str = "Private",
+	enable_outbound_replies: int = 1,
+	enable_start_conversation: int = 0,
+	can_reply: int = 1,
+	is_admin: int = 1,
+) -> dict[str, Any]:
+	"""Dialog-friendly wrapper around bootstrap_whatsapp_raven_bridge."""
+	_require_setup_permission()
+
+	accounts: list[str] = []
+	if cstr(whatsapp_account).strip():
+		accounts = [cstr(whatsapp_account).strip()]
+
+	route_members: list[dict[str, Any]] = []
+	if cstr(primary_raven_user).strip():
+		route_members.append(
+			{
+				"raven_user": cstr(primary_raven_user).strip(),
+				"is_admin": cint(is_admin),
+				"can_reply": cint(can_reply),
+			}
+		)
+
+	return bootstrap_whatsapp_raven_bridge(
+		workspace_name=workspace_name,
+		bridge_bot_name=bridge_bot_name,
+		bridge_system_user=bridge_system_user,
+		whatsapp_accounts=accounts,
+		route_members=route_members,
+		enable_outbound_replies=enable_outbound_replies,
+		enable_start_conversation=enable_start_conversation,
+		conversation_strategy=conversation_strategy,
+		channel_type=channel_type,
+	)
 
 
 @frappe.whitelist()

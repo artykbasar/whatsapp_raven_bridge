@@ -7,6 +7,7 @@ from frappe.utils.password import set_encrypted_password
 
 from whatsapp_raven_bridge.api.setup import (
 	bootstrap_whatsapp_raven_bridge,
+	ensure_default_bridge_system_user,
 	get_setup_status,
 )
 from whatsapp_raven_bridge.bridge.conversation import normalize_phone_number
@@ -21,6 +22,8 @@ class TestSetupBootstrapAndServiceUser(IntegrationTestCase):
 	ACCOUNT_NAME = "WARBH WhatsApp Account"
 	SYSTEM_USER_EMAIL = "warbh-service@example.com"
 	AGENT_USER = "warbh-agent@example.com"
+	NO_SETUP_USER = "warbh-no-setup@example.com"
+	SYSTEM_MANAGER_USER = "warbh-system-manager@example.com"
 
 	@classmethod
 	def setUpClass(cls):
@@ -28,6 +31,8 @@ class TestSetupBootstrapAndServiceUser(IntegrationTestCase):
 		cls._settings_snapshot = cls._snapshot_settings()
 		cls._ensure_raven_user("Administrator")
 		cls._ensure_user_with_raven_user(cls.AGENT_USER, "WARBH Agent")
+		cls._ensure_non_system_manager_user(cls.NO_SETUP_USER, "WARBH No Setup")
+		cls._ensure_system_manager_user(cls.SYSTEM_MANAGER_USER, "WARBH System Manager")
 		cls._ensure_whatsapp_account()
 		frappe.db.commit()
 
@@ -107,6 +112,24 @@ class TestSetupBootstrapAndServiceUser(IntegrationTestCase):
 		self.assertTrue(status.get("has_bridge_system_user"))
 		self.assertGreaterEqual(status.get("number_of_routes", 0), 1)
 		self.assertGreaterEqual(status.get("routes_using_thread_per_contact", 0), 1)
+
+	def test_default_bridge_system_user_seed_does_not_enable_bridge(self):
+		settings = frappe.get_single("WhatsApp Raven Bridge Settings")
+		settings.enabled = 0
+		settings.bridge_system_user = None
+		settings.save(ignore_permissions=True)
+		frappe.db.commit()
+
+		user_name = ensure_default_bridge_system_user()
+		self.assertTrue(user_name)
+		self.assertTrue(frappe.db.exists("User", user_name))
+
+		settings.reload()
+		self.assertEqual(settings.bridge_system_user, user_name)
+		self.assertEqual(int(settings.enabled), 0)
+
+		user_name_again = ensure_default_bridge_system_user()
+		self.assertEqual(user_name_again, user_name)
 
 	def test_bridge_user_context_restores_original_user(self):
 		self._bootstrap_with_admin_member()
@@ -270,6 +293,49 @@ class TestSetupBootstrapAndServiceUser(IntegrationTestCase):
 			)
 		)
 
+	def test_bootstrap_permission_denied_for_non_system_manager(self):
+		current_user = frappe.session.user
+		try:
+			frappe.set_user(self.NO_SETUP_USER)
+			with self.assertRaises(frappe.PermissionError):
+				bootstrap_whatsapp_raven_bridge(
+					workspace_name=self.WORKSPACE_NAME,
+					bridge_bot_name=self.BOT_NAME,
+					whatsapp_accounts=[self.ACCOUNT_NAME],
+				)
+		finally:
+			frappe.set_user(current_user)
+
+	def test_bootstrap_permission_allowed_for_administrator(self):
+		current_user = frappe.session.user
+		try:
+			frappe.set_user("Administrator")
+			result = bootstrap_whatsapp_raven_bridge(
+				workspace_name=self.WORKSPACE_NAME,
+				bridge_bot_name=self.BOT_NAME,
+				bridge_system_user=self.SYSTEM_USER_EMAIL,
+				whatsapp_accounts=[self.ACCOUNT_NAME],
+				route_members=[{"raven_user": "Administrator", "is_admin": 1, "can_reply": 1}],
+			)
+			self.assertTrue(result.get("settings_updated"))
+		finally:
+			frappe.set_user(current_user)
+
+	def test_bootstrap_permission_allowed_for_system_manager(self):
+		current_user = frappe.session.user
+		try:
+			frappe.set_user(self.SYSTEM_MANAGER_USER)
+			result = bootstrap_whatsapp_raven_bridge(
+				workspace_name=self.WORKSPACE_NAME,
+				bridge_bot_name=self.BOT_NAME,
+				bridge_system_user=self.SYSTEM_USER_EMAIL,
+				whatsapp_accounts=[self.ACCOUNT_NAME],
+				route_members=[{"raven_user": "Administrator", "is_admin": 1, "can_reply": 1}],
+			)
+			self.assertTrue(result.get("settings_updated"))
+		finally:
+			frappe.set_user(current_user)
+
 	@classmethod
 	def _snapshot_settings(cls):
 		settings = frappe.get_single("WhatsApp Raven Bridge Settings")
@@ -340,6 +406,51 @@ class TestSetupBootstrapAndServiceUser(IntegrationTestCase):
 				}
 			).insert(ignore_permissions=True).name
 		return user_doc.name, raven_user
+
+	@classmethod
+	def _ensure_non_system_manager_user(cls, user_id, full_name):
+		if frappe.db.exists("User", user_id):
+			user_doc = frappe.get_doc("User", user_id)
+			user_doc.enabled = 1
+		else:
+			user_doc = frappe.get_doc(
+				{
+					"doctype": "User",
+					"email": user_id,
+					"first_name": full_name,
+					"send_welcome_email": 0,
+					"enabled": 1,
+					"user_type": "System User",
+				}
+			)
+
+		for idx in range(len(user_doc.roles or []) - 1, -1, -1):
+			role = user_doc.roles[idx]
+			if role.role in {"System Manager", "Raven User"}:
+				user_doc.roles.pop(idx)
+
+		user_doc.save(ignore_permissions=True)
+
+	@classmethod
+	def _ensure_system_manager_user(cls, user_id, full_name):
+		if frappe.db.exists("User", user_id):
+			user_doc = frappe.get_doc("User", user_id)
+			user_doc.enabled = 1
+		else:
+			user_doc = frappe.get_doc(
+				{
+					"doctype": "User",
+					"email": user_id,
+					"first_name": full_name,
+					"send_welcome_email": 0,
+					"enabled": 1,
+					"user_type": "System User",
+				}
+			)
+
+		if "System Manager" not in [row.role for row in (user_doc.roles or [])]:
+			user_doc.append("roles", {"role": "System Manager"})
+		user_doc.save(ignore_permissions=True)
 
 	@classmethod
 	def _ensure_raven_user(cls, user):

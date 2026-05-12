@@ -30,6 +30,11 @@ Open **WhatsApp Raven Bridge Settings** and set:
   - `default_whatsapp_account`
   - `conversation_strategy`
 
+Install default behavior:
+
+- Bridge seeds a default `bridge_system_user` (`whatsapp.bridge@example.com`) when empty.
+- Bridge remains disabled until you explicitly enable it.
+
 ## 4) Configure WhatsApp Raven Account Route
 
 Create one route per WhatsApp account in **WhatsApp Raven Account Route**:
@@ -61,9 +66,24 @@ frappe.call("whatsapp_raven_bridge.api.setup.get_setup_status")
 
 to inspect configuration completeness.
 
+Desk-friendly setup is available from **WhatsApp Raven Bridge Settings**:
+
+- **Check Setup Status**
+- **Run Bootstrap Setup**
+
+The setup dialog supports one primary route member for MVP simplicity.
+Use CLI bootstrap (`route_members`) when you need to seed multiple members at once.
+
 ## Production Recommendation
 
 - One route per WhatsApp Account
 - `Thread Per Contact` strategy
 - Explicit route members
 - Enable `can_reply` only for agents allowed to send WhatsApp replies
+
+## Bridge System User vs Bridge Raven Bot
+
+- `bridge_system_user`: audit actor for bridge-created infrastructure writes.
+- `bridge_raven_user`: Raven sender identity for mirrored inbound WhatsApp messages.
+
+They serve different purposes and should both be configured.

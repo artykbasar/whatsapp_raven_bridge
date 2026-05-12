@@ -2,6 +2,12 @@
 
 Current behavior is text-only two-way sync.
 
+## Setup Entry Points
+
+- Desk: **WhatsApp Raven Bridge Settings** -> **Run Bootstrap Setup**
+- CLI: `bootstrap_whatsapp_raven_bridge`
+- Manual: configure settings/routes directly
+
 ## Inbound Flow
 
 1. Customer sends WhatsApp text message.

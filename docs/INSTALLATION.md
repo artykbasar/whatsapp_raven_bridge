@@ -38,7 +38,13 @@ bench --site <site-name> clear-cache
 
 ## Optional Bootstrap
 
-After at least one WhatsApp Account exists, you can bootstrap bridge setup:
+After at least one WhatsApp Account exists, you can bootstrap bridge setup in three ways:
+
+1. Desk UI: **WhatsApp Raven Bridge Settings** -> **Run Bootstrap Setup**
+2. CLI/bench execute
+3. Manual setup
+
+CLI example:
 
 ```python
 frappe.call(
@@ -60,3 +66,8 @@ Check bootstrap/status:
 ```python
 frappe.call("whatsapp_raven_bridge.api.setup.get_setup_status")
 ```
+
+Notes:
+
+- Meta webhook endpoint setup is done in `frappe_whatsapp` and Meta.
+- WhatsApp access tokens and template approvals are outside bridge bootstrap scope.
