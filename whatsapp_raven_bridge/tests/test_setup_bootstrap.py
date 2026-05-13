@@ -370,6 +370,8 @@ class TestSetupBootstrapAndServiceUser(IntegrationTestCase):
 		self.assertIn("Sync All Message History Now", js)
 		self.assertIn("byAccountDetail", js)
 		self.assertIn("accountOptions.join(\"\\n\")", js)
+		self.assertIn("Object.keys(byAccountDetail).sort()", js)
+		self.assertNotIn("Object.keys(byAccount).sort()", js)
 		self.assertNotIn("sample.filter((row) => row.whatsapp_account === selected)", js)
 		self.assertNotIn("Run Backfill Now", js)
 		self.assertNotIn("Run Scheduled Backfill Now", js)

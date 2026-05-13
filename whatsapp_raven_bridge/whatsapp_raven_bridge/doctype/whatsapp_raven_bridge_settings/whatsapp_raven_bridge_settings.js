@@ -144,7 +144,7 @@ function show_backfill_preview(summary) {
 	const sample = summary.sample || [];
 	const byAccountDetail = summary.by_account_detail || {};
 	const diagnostics = summary.diagnostics || {};
-	const accountOptions = ["All Accounts"].concat(Object.keys(byAccount).sort());
+	const accountOptions = ["All Accounts"].concat(Object.keys(byAccountDetail).sort());
 
 	const dialog = new frappe.ui.Dialog({
 		title: __("Backfill Preview"),
