@@ -368,6 +368,7 @@ class TestSetupBootstrapAndServiceUser(IntegrationTestCase):
 		self.assertIn("Run Bootstrap Setup", js)
 		self.assertIn("Preview Backfill", js)
 		self.assertIn("Sync All Message History Now", js)
+		self.assertIn("byAccountDetail", js)
 		self.assertNotIn("Run Backfill Now", js)
 		self.assertNotIn("Run Scheduled Backfill Now", js)
 		self.assertNotIn("fieldname: \"bridge_system_user\"", js)

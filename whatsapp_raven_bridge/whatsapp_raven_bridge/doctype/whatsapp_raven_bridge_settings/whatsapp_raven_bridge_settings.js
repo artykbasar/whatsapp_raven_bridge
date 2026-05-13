@@ -142,6 +142,7 @@ function show_backfill_preview(summary) {
 	const byAccount = summary.by_account || {};
 	const byPhone = summary.by_phone || {};
 	const sample = summary.sample || [];
+	const byAccountDetail = summary.by_account_detail || {};
 	const accountOptions = ["All Accounts"].concat(Object.keys(byAccount).sort());
 
 	const dialog = new frappe.ui.Dialog({
@@ -167,17 +168,27 @@ function show_backfill_preview(summary) {
 
 	const render_preview = () => {
 		const selected = dialog.get_value("account_filter") || "All Accounts";
-		const scopedSample = selected === "All Accounts" ? sample : sample.filter((row) => row.whatsapp_account === selected);
+		const accountDetail = selected === "All Accounts" ? null : byAccountDetail[selected] || {};
+		const scopedDirection = selected === "All Accounts" ? byDirection : accountDetail.by_direction || {};
+		const scopedPhone = selected === "All Accounts" ? byPhone : accountDetail.by_phone || {};
+		const scopedSample = selected === "All Accounts" ? sample : accountDetail.sample || [];
+		const scopedRows =
+			selected === "All Accounts"
+				? [
+						["Scanned", String(summary.scanned || 0)],
+						["Eligible", String(summary.eligible || 0)],
+						["Skipped Existing", String(summary.skipped_existing || 0)],
+					]
+				: [
+						["Scanned", String(accountDetail.scanned || 0)],
+						["Eligible", String(accountDetail.eligible || 0)],
+						["Skipped Existing", String(accountDetail.skipped_existing || 0)],
+					];
 
-		const rows = [
-			["Scanned", String(summary.scanned || 0)],
-			["Eligible", String(summary.eligible || 0)],
-			["Skipped Existing", String(summary.skipped_existing || 0)],
-		];
 		const tableHtml = `
 			<table class="table table-bordered">
 				<tbody>
-					${rows
+					${scopedRows
 						.map(
 							([label, value]) =>
 								`<tr><td><strong>${frappe.utils.escape_html(label)}</strong></td><td>${frappe.utils.escape_html(value)}</td></tr>`
@@ -187,8 +198,8 @@ function show_backfill_preview(summary) {
 			</table>
 		`;
 
-		const directionHtml = Object.keys(byDirection).length
-			? `<ul>${Object.entries(byDirection)
+		const directionHtml = Object.keys(scopedDirection).length
+			? `<ul>${Object.entries(scopedDirection)
 					.map(([k, v]) => `<li>${frappe.utils.escape_html(k)}: ${frappe.utils.escape_html(String(v))}</li>`)
 					.join("")}</ul>`
 			: "<p>None</p>";
@@ -197,8 +208,8 @@ function show_backfill_preview(summary) {
 					.map(([k, v]) => `<li>${frappe.utils.escape_html(k)}: ${frappe.utils.escape_html(String(v))}</li>`)
 					.join("")}</ul>`
 			: "<p>None</p>";
-		const phoneHtml = Object.keys(byPhone).length
-			? `<ul>${Object.entries(byPhone)
+		const phoneHtml = Object.keys(scopedPhone).length
+			? `<ul>${Object.entries(scopedPhone)
 					.slice(0, 20)
 					.map(([k, v]) => `<li>${frappe.utils.escape_html(k)}: ${frappe.utils.escape_html(String(v))}</li>`)
 					.join("")}</ul>`
@@ -221,8 +232,11 @@ function show_backfill_preview(summary) {
 			${tableHtml}
 			<h5>${__("By Direction")}</h5>
 			${directionHtml}
-			<h5>${__("By Account")}</h5>
-			${accountHtml}
+			${
+				selected === "All Accounts"
+					? `<h5>${__("By Account")}</h5>${accountHtml}`
+					: `<h5>${__("Account")}</h5><p>${frappe.utils.escape_html(selected)}</p>`
+			}
 			<h5>${__("By Phone (Top 20)")}</h5>
 			${phoneHtml}
 			<h5>${__("Sample Rows")}</h5>

@@ -590,34 +590,55 @@ def _build_preview_summary(candidates: list[frappe._dict]) -> frappe._dict:
 			"by_direction": {"Incoming": 0, "Outgoing": 0},
 			"by_phone": {},
 			"sample": [],
+			"by_account_detail": {},
 		}
 	)
 	for item in candidates:
 		doc = item.doc
+		account = cstr(doc.get("whatsapp_account") or "No Account")
+		direction = cstr(doc.get("type") or "Unknown")
+		phone = normalize_phone_number(doc.get("from") or doc.get("to"))
+		account_detail = summary.by_account_detail.get(account)
+		if not account_detail:
+			account_detail = {
+				"scanned": 0,
+				"eligible": 0,
+				"skipped_existing": 0,
+				"by_direction": {},
+				"by_phone": {},
+				"sample": [],
+			}
+			summary.by_account_detail[account] = account_detail
+
+		account_detail["scanned"] = int(account_detail.get("scanned", 0)) + 1
+		account_detail["by_direction"][direction] = int(account_detail["by_direction"].get(direction, 0)) + 1
+		account_detail["by_phone"][phone] = int(account_detail["by_phone"].get(phone, 0)) + 1
+
+		row = {
+			"whatsapp_message": doc.name,
+			"message_id": doc.get("message_id"),
+			"type": doc.get("type"),
+			"phone": phone,
+			"whatsapp_account": doc.get("whatsapp_account"),
+			"original_datetime": cstr(item.original_info.original_datetime),
+		}
+
 		if get_existing_message_link_by_whatsapp_message(doc.name) or (
 			doc.get("message_id") and get_existing_message_link_by_whatsapp_message_id(doc.get("message_id"))
 		):
 			summary.skipped_existing += 1
+			account_detail["skipped_existing"] = int(account_detail.get("skipped_existing", 0)) + 1
 			continue
 		summary.eligible += 1
-		account = cstr(doc.get("whatsapp_account") or "No Account")
-		direction = cstr(doc.get("type") or "Unknown")
-		phone = normalize_phone_number(doc.get("from") or doc.get("to"))
+		account_detail["eligible"] = int(account_detail.get("eligible", 0)) + 1
 		summary.by_account[account] = int(summary.by_account.get(account, 0)) + 1
 		summary.by_direction[direction] = int(summary.by_direction.get(direction, 0)) + 1
 		summary.by_phone[phone] = int(summary.by_phone.get(phone, 0)) + 1
 
 		if len(summary.sample) < 25:
-			summary.sample.append(
-				{
-					"whatsapp_message": doc.name,
-					"message_id": doc.get("message_id"),
-					"type": doc.get("type"),
-					"phone": phone,
-					"whatsapp_account": doc.get("whatsapp_account"),
-					"original_datetime": cstr(item.original_info.original_datetime),
-				}
-			)
+			summary.sample.append(row)
+		if len(account_detail["sample"]) < 25:
+			account_detail["sample"].append(row)
 	return summary
 
 

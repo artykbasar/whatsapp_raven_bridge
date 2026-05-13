@@ -659,6 +659,7 @@ class TestTwoWayMVPHardening(IntegrationTestCase):
 		self._delete_raven_messages()
 		self._delete_whatsapp_messages()
 		self._delete_conversations_and_channels()
+		self._delete_account_routes()
 
 	def _delete_message_links(self):
 		links = frappe.get_all(
@@ -727,6 +728,16 @@ class TestTwoWayMVPHardening(IntegrationTestCase):
 		for name in conversations:
 			if frappe.db.exists("WhatsApp Raven Conversation", name):
 				frappe.delete_doc("WhatsApp Raven Conversation", name, force=True)
+
+	def _delete_account_routes(self):
+		route_names = frappe.get_all(
+			"WhatsApp Raven Account Route",
+			filters={"whatsapp_account": self.ACCOUNT_NAME},
+			pluck="name",
+		)
+		for route_name in route_names:
+			if frappe.db.exists("WhatsApp Raven Account Route", route_name):
+				frappe.delete_doc("WhatsApp Raven Account Route", route_name, force=True)
 
 	def _test_slug(self):
 		return self._testMethodName.replace("test_", "").replace("_", "-")
