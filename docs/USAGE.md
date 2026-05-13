@@ -44,7 +44,20 @@ CLI examples:
 ```bash
 bench --site SITE execute whatsapp_raven_bridge.api.backfill.preview_backfill --kwargs '{"whatsapp_account":"ACCOUNT","limit":100}'
 bench --site SITE execute whatsapp_raven_bridge.api.backfill.run_backfill --kwargs '{"whatsapp_account":"ACCOUNT","limit":100}'
+bench --site SITE execute whatsapp_raven_bridge.api.backfill.run_scheduled_backfill_now
 ```
+
+Desk actions (Settings):
+
+- **Preview Backfill**: dry-run summary only
+- **Run Backfill Now**: queues import job after confirmation
+- **Run Scheduled Backfill Now**: triggers scheduled policy immediately
+
+Scheduled reconciliation:
+
+- Controlled by Bridge Settings scheduled fields.
+- Uses lookback window + limit, so it scans recent missed records only.
+- Does not resend WhatsApp messages.
 
 ## Permissions
 

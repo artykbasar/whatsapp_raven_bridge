@@ -13,6 +13,11 @@ from whatsapp_raven_bridge.api.setup import (
 	_ensure_default_bridge_system_user_state,
 )
 
+MIN_BACKFILL_LIMIT = 1
+MAX_BACKFILL_LIMIT = 1000
+MIN_LOOKBACK_HOURS = 1
+MAX_LOOKBACK_HOURS = 720
+
 
 class WhatsAppRavenBridgeSettings(Document):
 	def _validate_links(self):
@@ -21,6 +26,7 @@ class WhatsAppRavenBridgeSettings(Document):
 
 	def validate(self):
 		self._ensure_bridge_system_user_link()
+		self._validate_scheduled_backfill_fields()
 
 	def _ensure_bridge_system_user_link(self):
 		user_ref = cstr(self.bridge_system_user).strip()
@@ -52,3 +58,37 @@ class WhatsAppRavenBridgeSettings(Document):
 					"Bridge System User must be an existing User or a valid email address to auto-create."
 				)
 			)
+
+	def _validate_scheduled_backfill_fields(self):
+		self.scheduled_backfill_limit = self._bounded_int(
+			self.scheduled_backfill_limit,
+			default=200,
+			min_value=MIN_BACKFILL_LIMIT,
+			max_value=MAX_BACKFILL_LIMIT,
+			label=_("Scheduled Backfill Limit"),
+		)
+		self.scheduled_backfill_lookback_hours = self._bounded_int(
+			self.scheduled_backfill_lookback_hours,
+			default=24,
+			min_value=MIN_LOOKBACK_HOURS,
+			max_value=MAX_LOOKBACK_HOURS,
+			label=_("Scheduled Backfill Lookback Hours"),
+		)
+		if cstr(self.scheduled_backfill_interval).strip() not in {
+			"Every 5 Minutes",
+			"Hourly",
+			"Every 5 Hours",
+			"Daily",
+		}:
+			self.scheduled_backfill_interval = "Hourly"
+		if cstr(self.scheduled_backfill_direction).strip() not in {"Both", "Incoming", "Outgoing"}:
+			self.scheduled_backfill_direction = "Both"
+
+	def _bounded_int(self, value, *, default, min_value, max_value, label):
+		try:
+			number = int(value) if value is not None and cstr(value).strip() != "" else int(default)
+		except Exception:
+			number = int(default)
+		if number < min_value or number > max_value:
+			frappe.throw(_("{0} must be between {1} and {2}.").format(label, min_value, max_value))
+		return number

@@ -14,7 +14,16 @@
   "conversation_strategy",
   "enable_outbound_replies",
   "enable_start_conversation",
-  "default_channel_members"
+  "default_channel_members",
+  "enable_scheduled_backfill",
+  "scheduled_backfill_interval",
+  "scheduled_backfill_lookback_hours",
+  "scheduled_backfill_limit",
+  "scheduled_backfill_direction",
+  "last_scheduled_backfill_at",
+  "last_scheduled_backfill_status",
+  "last_scheduled_backfill_summary",
+  "last_backfill_job_id"
  ],
  "fields": [
   {
@@ -86,6 +95,62 @@
    "fieldtype": "Table",
    "label": "Default Channel Members",
    "options": "WhatsApp Raven Default Channel Member"
+  },
+  {
+   "default": "0",
+   "fieldname": "enable_scheduled_backfill",
+   "fieldtype": "Check",
+   "label": "Enable Scheduled Backfill"
+  },
+  {
+   "default": "Hourly",
+   "fieldname": "scheduled_backfill_interval",
+   "fieldtype": "Select",
+   "label": "Scheduled Backfill Interval",
+   "options": "Every 5 Minutes\nHourly\nEvery 5 Hours\nDaily"
+  },
+  {
+   "default": "24",
+   "fieldname": "scheduled_backfill_lookback_hours",
+   "fieldtype": "Int",
+   "label": "Scheduled Backfill Lookback Hours"
+  },
+  {
+   "default": "200",
+   "fieldname": "scheduled_backfill_limit",
+   "fieldtype": "Int",
+   "label": "Scheduled Backfill Limit"
+  },
+  {
+   "default": "Both",
+   "fieldname": "scheduled_backfill_direction",
+   "fieldtype": "Select",
+   "label": "Scheduled Backfill Direction",
+   "options": "Both\nIncoming\nOutgoing"
+  },
+  {
+   "fieldname": "last_scheduled_backfill_at",
+   "fieldtype": "Datetime",
+   "label": "Last Scheduled Backfill At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_scheduled_backfill_status",
+   "fieldtype": "Data",
+   "label": "Last Scheduled Backfill Status",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_scheduled_backfill_summary",
+   "fieldtype": "Long Text",
+   "label": "Last Scheduled Backfill Summary",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_backfill_job_id",
+   "fieldtype": "Data",
+   "label": "Last Backfill Job ID",
+   "read_only": 1
   }
  ],
  "index_web_pages_for_search": 1,

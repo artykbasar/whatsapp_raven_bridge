@@ -5,10 +5,18 @@ from datetime import datetime, timedelta
 
 import frappe
 from frappe.tests import IntegrationTestCase
-from frappe.utils import get_datetime
+from frappe.utils import cstr, get_datetime, now_datetime
 from frappe.utils.password import set_encrypted_password
 
-from whatsapp_raven_bridge.bridge.backfill import backfill_whatsapp_messages
+import whatsapp_raven_bridge.api.backfill as backfill_api
+from whatsapp_raven_bridge.api.backfill import enqueue_backfill, preview_backfill, run_backfill
+from whatsapp_raven_bridge.bridge.backfill import (
+	BACKFILL_LOCK_KEY,
+	backfill_whatsapp_messages,
+	release_backfill_lock,
+	run_scheduled_backfill_if_due,
+	run_scheduled_backfill_now,
+)
 
 
 class TestHistoricalBackfill(IntegrationTestCase):
@@ -16,6 +24,7 @@ class TestHistoricalBackfill(IntegrationTestCase):
 	WORKSPACE = "WARB4H Workspace"
 	BOT_NAME = "WARB4H Bot"
 	ACCOUNT_NAME = "WARB4H WhatsApp Account"
+	NON_MANAGER_USER = "warb4h_non_manager@example.com"
 
 	@classmethod
 	def setUpClass(cls):
@@ -25,6 +34,7 @@ class TestHistoricalBackfill(IntegrationTestCase):
 		cls._ensure_workspace()
 		cls._ensure_bot()
 		cls._ensure_whatsapp_account()
+		cls._ensure_non_system_manager_user(cls.NON_MANAGER_USER, "WARB4H Non Manager")
 		cls._configure_settings()
 		frappe.db.commit()
 
@@ -225,6 +235,193 @@ class TestHistoricalBackfill(IntegrationTestCase):
 		self.assertEqual(get_datetime(link.original_message_datetime), meta_dt)
 		self.assertEqual(get_datetime(raven_message.creation), meta_dt)
 
+	def test_h_backfill_restores_existing_syncing_flag(self):
+		msg = self._insert_whatsapp_incoming("h01", "syncing flag restore")
+		self._set_whatsapp_message_timestamps(msg.name, datetime(2026, 1, 15, 9, 0, 0))
+		frappe.flags.whatsapp_raven_bridge_syncing = True
+		try:
+			result = backfill_whatsapp_messages(whatsapp_account=self.ACCOUNT_NAME, dry_run=0, limit=20)
+			self.assertEqual(int(result.imported), 1)
+			self.assertTrue(bool(getattr(frappe.flags, "whatsapp_raven_bridge_syncing", False)))
+		finally:
+			frappe.flags.whatsapp_raven_bridge_syncing = False
+
+	def test_i_preview_backfill_api_creates_no_records(self):
+		msg = self._insert_whatsapp_incoming("i01", "api preview")
+		before_links = frappe.db.count("WhatsApp Raven Message Link")
+		before_raven = frappe.db.count("Raven Message")
+		result = preview_backfill(whatsapp_account=self.ACCOUNT_NAME, limit=20)
+		self.assertGreaterEqual(int(result.get("scanned", 0)), 1)
+		self.assertEqual(frappe.db.count("WhatsApp Raven Message Link"), before_links)
+		self.assertEqual(frappe.db.count("Raven Message"), before_raven)
+		self.assertFalse(frappe.db.exists("WhatsApp Raven Message Link", {"whatsapp_message": msg.name}))
+
+	def test_j_run_backfill_permission_denied_for_non_system_manager(self):
+		self._insert_whatsapp_incoming("j01", "permission denied")
+		current_user = frappe.session.user
+		try:
+			frappe.set_user(self.NON_MANAGER_USER)
+			with self.assertRaises(frappe.PermissionError):
+				run_backfill(whatsapp_account=self.ACCOUNT_NAME, limit=20)
+		finally:
+			frappe.set_user(current_user)
+
+	def test_j2_enqueue_backfill_permission_denied_for_non_system_manager(self):
+		current_user = frappe.session.user
+		try:
+			frappe.set_user(self.NON_MANAGER_USER)
+			with self.assertRaises(frappe.PermissionError):
+				enqueue_backfill(whatsapp_account=self.ACCOUNT_NAME, limit=20)
+		finally:
+			frappe.set_user(current_user)
+
+	def test_k_enqueue_backfill_returns_job_id(self):
+		self._insert_whatsapp_incoming("k01", "enqueue")
+		original_enqueue = frappe.enqueue
+
+		class _Job:
+			id = "job-warb4h-enqueue"
+
+		def fake_enqueue(*args, **kwargs):
+			return _Job()
+
+		try:
+			release_backfill_lock(BACKFILL_LOCK_KEY)
+			frappe.enqueue = fake_enqueue
+			result = enqueue_backfill(whatsapp_account=self.ACCOUNT_NAME, limit=50)
+		finally:
+			frappe.enqueue = original_enqueue
+			release_backfill_lock(BACKFILL_LOCK_KEY)
+
+		self.assertEqual(result.get("status"), "queued")
+		self.assertEqual(result.get("job_id"), "job-warb4h-enqueue")
+
+	def test_l_scheduler_skips_when_disabled(self):
+		settings = frappe.get_single("WhatsApp Raven Bridge Settings")
+		settings.enable_scheduled_backfill = 0
+		settings.save(ignore_permissions=True)
+		result = run_scheduled_backfill_if_due()
+		self.assertEqual(result.get("status"), "skipped_disabled")
+
+	def test_m_scheduler_queues_when_due_and_updates_status(self):
+		settings = frappe.get_single("WhatsApp Raven Bridge Settings")
+		settings.enable_scheduled_backfill = 1
+		settings.scheduled_backfill_interval = "Every 5 Minutes"
+		settings.scheduled_backfill_lookback_hours = 2
+		settings.scheduled_backfill_limit = 75
+		settings.scheduled_backfill_direction = "Incoming"
+		settings.last_scheduled_backfill_at = datetime(2026, 1, 1, 0, 0, 0)
+		settings.save(ignore_permissions=True)
+
+		original_enqueue = frappe.enqueue
+
+		class _Job:
+			id = "job-warb4h-scheduled"
+
+		def fake_enqueue(*args, **kwargs):
+			return _Job()
+
+		try:
+			release_backfill_lock(BACKFILL_LOCK_KEY)
+			frappe.enqueue = fake_enqueue
+			result = run_scheduled_backfill_if_due()
+		finally:
+			frappe.enqueue = original_enqueue
+			release_backfill_lock(BACKFILL_LOCK_KEY)
+
+		self.assertEqual(result.get("status"), "queued")
+		self.assertEqual(result.get("job_id"), "job-warb4h-scheduled")
+		settings.reload()
+		self.assertEqual(cstr(settings.last_scheduled_backfill_status), "queued")
+		self.assertEqual(cstr(settings.last_backfill_job_id), "job-warb4h-scheduled")
+		summary = json.loads(cstr(settings.last_scheduled_backfill_summary or "{}"))
+		self.assertEqual(int(summary.get("lookback_hours")), 2)
+		self.assertEqual(int(summary.get("limit")), 75)
+		self.assertEqual(cstr(summary.get("direction")), "Incoming")
+
+	def test_n_scheduler_skips_when_not_due(self):
+		settings = frappe.get_single("WhatsApp Raven Bridge Settings")
+		settings.enable_scheduled_backfill = 1
+		settings.scheduled_backfill_interval = "Hourly"
+		settings.last_scheduled_backfill_at = now_datetime()
+		settings.save(ignore_permissions=True)
+		result = run_scheduled_backfill_if_due()
+		self.assertEqual(result.get("status"), "skipped_not_due")
+
+	def test_o_scheduler_skips_on_overlap_lock(self):
+		settings = frappe.get_single("WhatsApp Raven Bridge Settings")
+		settings.enable_scheduled_backfill = 1
+		settings.scheduled_backfill_interval = "Every 5 Minutes"
+		settings.last_scheduled_backfill_at = datetime(2026, 1, 1, 0, 0, 0)
+		settings.save(ignore_permissions=True)
+
+		frappe.cache().set_value(
+			BACKFILL_LOCK_KEY,
+			{"status": "running", "created_at": now_datetime().strftime("%Y-%m-%d %H:%M:%S"), "user": "tester"},
+			shared=True,
+			expires_in_sec=1800,
+		)
+		try:
+			result = run_scheduled_backfill_if_due()
+		finally:
+			release_backfill_lock(BACKFILL_LOCK_KEY)
+		self.assertEqual(result.get("status"), "skipped_locked")
+
+	def test_p_run_scheduled_backfill_now_manual(self):
+		settings = frappe.get_single("WhatsApp Raven Bridge Settings")
+		settings.enable_scheduled_backfill = 1
+		settings.scheduled_backfill_direction = "Outgoing"
+		settings.save(ignore_permissions=True)
+
+		original_enqueue = frappe.enqueue
+
+		class _Job:
+			id = "job-warb4h-manual-scheduled"
+
+		def fake_enqueue(*args, **kwargs):
+			return _Job()
+
+		try:
+			release_backfill_lock(BACKFILL_LOCK_KEY)
+			frappe.enqueue = fake_enqueue
+			result = run_scheduled_backfill_now()
+		finally:
+			frappe.enqueue = original_enqueue
+			release_backfill_lock(BACKFILL_LOCK_KEY)
+
+		self.assertEqual(result.get("status"), "queued")
+		self.assertEqual(result.get("job_id"), "job-warb4h-manual-scheduled")
+
+	def test_q_run_backfill_releases_lock_when_backfill_raises(self):
+		original_impl = backfill_api.backfill_whatsapp_messages
+
+		def fail_backfill(*args, **kwargs):
+			raise RuntimeError("forced backfill failure")
+
+		try:
+			release_backfill_lock(BACKFILL_LOCK_KEY)
+			backfill_api.backfill_whatsapp_messages = fail_backfill
+			with self.assertRaises(RuntimeError):
+				run_backfill(whatsapp_account=self.ACCOUNT_NAME, limit=10)
+		finally:
+			backfill_api.backfill_whatsapp_messages = original_impl
+		self.assertIsNone(frappe.cache().get_value(BACKFILL_LOCK_KEY, shared=True))
+
+	def test_r_enqueue_backfill_releases_lock_when_enqueue_fails(self):
+		original_enqueue = frappe.enqueue
+
+		def fail_enqueue(*args, **kwargs):
+			raise RuntimeError("forced enqueue failure")
+
+		try:
+			release_backfill_lock(BACKFILL_LOCK_KEY)
+			frappe.enqueue = fail_enqueue
+			with self.assertRaises(RuntimeError):
+				enqueue_backfill(whatsapp_account=self.ACCOUNT_NAME, limit=10)
+		finally:
+			frappe.enqueue = original_enqueue
+		self.assertIsNone(frappe.cache().get_value(BACKFILL_LOCK_KEY, shared=True))
+
 	@classmethod
 	def _snapshot_settings(cls):
 		settings = frappe.get_single("WhatsApp Raven Bridge Settings")
@@ -238,6 +435,15 @@ class TestHistoricalBackfill(IntegrationTestCase):
 			"default_whatsapp_account": settings.default_whatsapp_account,
 			"conversation_strategy": settings.conversation_strategy,
 			"enable_outbound_replies": settings.enable_outbound_replies,
+			"enable_scheduled_backfill": settings.enable_scheduled_backfill,
+			"scheduled_backfill_interval": settings.scheduled_backfill_interval,
+			"scheduled_backfill_lookback_hours": settings.scheduled_backfill_lookback_hours,
+			"scheduled_backfill_limit": settings.scheduled_backfill_limit,
+			"scheduled_backfill_direction": settings.scheduled_backfill_direction,
+			"last_scheduled_backfill_at": settings.last_scheduled_backfill_at,
+			"last_scheduled_backfill_status": settings.last_scheduled_backfill_status,
+			"last_scheduled_backfill_summary": settings.last_scheduled_backfill_summary,
+			"last_backfill_job_id": settings.last_backfill_job_id,
 			"default_channel_members": [
 				{"raven_user": row.raven_user, "is_admin": row.is_admin}
 				for row in (settings.default_channel_members or [])
@@ -268,6 +474,15 @@ class TestHistoricalBackfill(IntegrationTestCase):
 		settings.default_whatsapp_account = cls.ACCOUNT_NAME
 		settings.conversation_strategy = "Thread Per Contact"
 		settings.enable_outbound_replies = 1
+		settings.enable_scheduled_backfill = 0
+		settings.scheduled_backfill_interval = "Hourly"
+		settings.scheduled_backfill_lookback_hours = 24
+		settings.scheduled_backfill_limit = 200
+		settings.scheduled_backfill_direction = "Both"
+		settings.last_scheduled_backfill_at = None
+		settings.last_scheduled_backfill_status = None
+		settings.last_scheduled_backfill_summary = None
+		settings.last_backfill_job_id = None
 		settings.set("default_channel_members", [])
 		settings.append("default_channel_members", {"raven_user": "Administrator", "is_admin": 1})
 		settings.save(ignore_permissions=True)
@@ -314,6 +529,27 @@ class TestHistoricalBackfill(IntegrationTestCase):
 					"enabled": 1,
 				}
 			).insert(ignore_permissions=True)
+
+	@classmethod
+	def _ensure_non_system_manager_user(cls, user_id, full_name):
+		if frappe.db.exists("User", user_id):
+			user_doc = frappe.get_doc("User", user_id)
+			user_doc.enabled = 1
+		else:
+			user_doc = frappe.get_doc(
+				{
+					"doctype": "User",
+					"email": user_id,
+					"first_name": full_name,
+					"send_welcome_email": 0,
+					"enabled": 1,
+					"user_type": "System User",
+				}
+			)
+		for idx in range(len(user_doc.roles or []) - 1, -1, -1):
+			if user_doc.roles[idx].role == "System Manager":
+				user_doc.roles.pop(idx)
+		user_doc.save(ignore_permissions=True)
 
 	@classmethod
 	def _ensure_whatsapp_account(cls):

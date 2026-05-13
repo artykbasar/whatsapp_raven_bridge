@@ -52,6 +52,24 @@ Verify:
 - Backfill API used (`preview_backfill` / `run_backfill`)
 - No new outbound WhatsApp rows with `reference_doctype = "Raven Message"` created by backfill run
 
+## Scheduled backfill is not running
+
+Check **WhatsApp Raven Bridge Settings**:
+
+- `enable_scheduled_backfill = 1`
+- interval/lookback/limit are set to sensible values
+- `last_scheduled_backfill_at`
+- `last_scheduled_backfill_status`
+- `last_scheduled_backfill_summary`
+
+Also verify scheduler is running in bench (`schedule` process via honcho/supervisor).
+
+You can trigger it manually:
+
+```bash
+bench --site SITE execute whatsapp_raven_bridge.api.backfill.run_scheduled_backfill_now
+```
+
 ## Tests are making real Meta calls
 
 Bridge tests monkeypatch `WhatsAppMessage.notify` to avoid real network calls.

@@ -9,7 +9,7 @@ from typing import Any
 
 import frappe
 from frappe import _
-from frappe.utils import cstr, escape_html, get_datetime, now_datetime, strip_html_tags
+from frappe.utils import add_to_date, cstr, escape_html, get_datetime, now_datetime, strip_html_tags
 
 from whatsapp_raven_bridge.bridge.conversation import (
 	create_message_link,
@@ -21,6 +21,15 @@ from whatsapp_raven_bridge.bridge.conversation import (
 from whatsapp_raven_bridge.bridge.raven_destination import ensure_raven_destination
 from whatsapp_raven_bridge.utils.settings import get_settings
 
+BACKFILL_LOCK_KEY = "whatsapp_raven_bridge:historical_backfill_lock"
+BACKFILL_LOCK_TIMEOUT_SECONDS = 30 * 60
+SCHEDULE_INTERVAL_MINUTES = {
+	"Every 5 Minutes": 5,
+	"Hourly": 60,
+	"Every 5 Hours": 5 * 60,
+	"Daily": 24 * 60,
+}
+
 
 def backfill_whatsapp_messages(
 	whatsapp_account: str | None = None,
@@ -30,10 +39,15 @@ def backfill_whatsapp_messages(
 	direction: str | None = None,
 	limit: int = 500,
 	dry_run: int = 1,
+	preserve_raven_timestamps: int = 1,
+	scheduled: int = 0,
+	lock_key: str | None = None,
 ) -> frappe._dict:
 	"""Preview or run backfill of historical WhatsApp Message rows."""
 	limit = max(1, min(int(limit or 500), 5000))
 	dry_run = 1 if int(dry_run or 0) else 0
+	preserve_raven_timestamps = 1 if int(preserve_raven_timestamps or 0) else 0
+	scheduled = 1 if int(scheduled or 0) else 0
 	settings = get_settings()
 	if not settings or not int(settings.get("enabled") or 0):
 		frappe.throw(_("WhatsApp Raven Bridge is disabled in settings."))
@@ -54,6 +68,7 @@ def backfill_whatsapp_messages(
 	summary = frappe._dict(
 		{
 			"dry_run": 0,
+			"scheduled": scheduled,
 			"scanned": len(candidates),
 			"imported": 0,
 			"skipped_existing": 0,
@@ -62,66 +77,76 @@ def backfill_whatsapp_messages(
 			"conversations_touched": [],
 			"earliest_timestamp": None,
 			"latest_timestamp": None,
+			"warnings": [],
 		}
 	)
 	seen_conversations = set()
 	touched_channels = set()
 	touched_inbox_channels = set()
 
-	for item in candidates:
-		doc = item.get("doc")
-		try:
-			result = process_backfill_whatsapp_message(
-				doc=doc,
-				settings=settings,
-				original_info=item.get("original_info"),
-			)
-		except Exception:
-			summary.errors.append(
-				{
-					"whatsapp_message": cstr(getattr(doc, "name", "")).strip(),
-					"message_id": cstr(doc.get("message_id") if doc else "").strip(),
-					"error": frappe.get_traceback(),
-				}
-			)
-			continue
+	try:
+		for item in candidates:
+			doc = item.get("doc")
+			try:
+				result = process_backfill_whatsapp_message(
+					doc=doc,
+					settings=settings,
+					original_info=item.get("original_info"),
+					preserve_raven_timestamps=preserve_raven_timestamps,
+				)
+			except Exception:
+				summary.errors.append(
+					{
+						"whatsapp_message": cstr(getattr(doc, "name", "")).strip(),
+						"message_id": cstr(doc.get("message_id") if doc else "").strip(),
+						"error": frappe.get_traceback(),
+					}
+				)
+				continue
 
-		status = cstr(result.get("status") if isinstance(result, dict) else result).strip()
-		if status == "imported":
-			summary.imported += 1
-			channel_id = cstr(result.get("channel") or "").strip()
-			if channel_id:
-				touched_channels.add(channel_id)
-			inbox_channel_id = cstr(result.get("inbox_channel") or "").strip()
-			if inbox_channel_id:
-				touched_inbox_channels.add(inbox_channel_id)
-			conversation_name = cstr(result.get("conversation") or "").strip()
-			if conversation_name and conversation_name not in seen_conversations:
-				seen_conversations.add(conversation_name)
-				summary.conversations_touched.append(conversation_name)
+			status = cstr(result.get("status") if isinstance(result, dict) else result).strip()
+			if status == "imported":
+				summary.imported += 1
+				channel_id = cstr(result.get("channel") or "").strip()
+				if channel_id:
+					touched_channels.add(channel_id)
+				inbox_channel_id = cstr(result.get("inbox_channel") or "").strip()
+				if inbox_channel_id:
+					touched_inbox_channels.add(inbox_channel_id)
+				conversation_name = cstr(result.get("conversation") or "").strip()
+				if conversation_name and conversation_name not in seen_conversations:
+					seen_conversations.add(conversation_name)
+					summary.conversations_touched.append(conversation_name)
 
-			used_dt = result.get("original_datetime")
-			if used_dt:
-				used_dt = get_datetime(used_dt)
-				if not summary.earliest_timestamp or used_dt < get_datetime(summary.earliest_timestamp):
-					summary.earliest_timestamp = used_dt
-				if not summary.latest_timestamp or used_dt > get_datetime(summary.latest_timestamp):
-					summary.latest_timestamp = used_dt
-		elif status in ("skipped_existing_whatsapp_message", "skipped_existing_whatsapp_message_id", "skipped_existing_raven_message"):
-			summary.skipped_existing += 1
-		elif status in ("skipped_unsupported_content_type", "skipped_missing_phone", "skipped_missing_body"):
-			summary.skipped_unsupported += 1
+				used_dt = result.get("original_datetime")
+				if used_dt:
+					used_dt = get_datetime(used_dt)
+					if not summary.earliest_timestamp or used_dt < get_datetime(summary.earliest_timestamp):
+						summary.earliest_timestamp = used_dt
+					if not summary.latest_timestamp or used_dt > get_datetime(summary.latest_timestamp):
+						summary.latest_timestamp = used_dt
+			elif status in (
+				"skipped_existing_whatsapp_message",
+				"skipped_existing_whatsapp_message_id",
+				"skipped_existing_raven_message",
+			):
+				summary.skipped_existing += 1
+			elif status in ("skipped_unsupported_content_type", "skipped_missing_phone", "skipped_missing_body"):
+				summary.skipped_unsupported += 1
 
-	for channel_id in sorted(touched_channels):
-		refresh_thread_last_message_state(channel_id)
-	for channel_id in sorted(touched_inbox_channels):
-		refresh_thread_last_message_state(channel_id)
+		for channel_id in sorted(touched_channels):
+			refresh_thread_last_message_state(channel_id)
+		for channel_id in sorted(touched_inbox_channels):
+			refresh_thread_last_message_state(channel_id)
 
-	if summary.earliest_timestamp:
-		summary.earliest_timestamp = get_datetime(summary.earliest_timestamp).strftime("%Y-%m-%d %H:%M:%S")
-	if summary.latest_timestamp:
-		summary.latest_timestamp = get_datetime(summary.latest_timestamp).strftime("%Y-%m-%d %H:%M:%S")
-	return summary
+		if summary.earliest_timestamp:
+			summary.earliest_timestamp = get_datetime(summary.earliest_timestamp).strftime("%Y-%m-%d %H:%M:%S")
+		if summary.latest_timestamp:
+			summary.latest_timestamp = get_datetime(summary.latest_timestamp).strftime("%Y-%m-%d %H:%M:%S")
+		return summary
+	finally:
+		if lock_key:
+			release_backfill_lock(lock_key)
 
 
 def get_backfill_candidates(
@@ -189,7 +214,12 @@ def get_backfill_candidates(
 	return candidates[:limit]
 
 
-def process_backfill_whatsapp_message(doc, settings=None, original_info=None) -> frappe._dict:
+def process_backfill_whatsapp_message(
+	doc,
+	settings=None,
+	original_info=None,
+	preserve_raven_timestamps: int = 1,
+) -> frappe._dict:
 	"""Backfill one WhatsApp Message into Raven without sending anything to Meta."""
 	settings = settings or get_settings()
 	if cstr(getattr(doc, "doctype", "")).strip() != "WhatsApp Message":
@@ -281,6 +311,7 @@ def process_backfill_whatsapp_message(doc, settings=None, original_info=None) ->
 	if original_info.warning:
 		metadata["timestamp_warning"] = original_info.warning
 
+	previous_syncing = getattr(frappe.flags, "whatsapp_raven_bridge_syncing", False)
 	try:
 		frappe.flags.whatsapp_raven_bridge_syncing = True
 		raven_message = frappe.get_doc(
@@ -297,21 +328,23 @@ def process_backfill_whatsapp_message(doc, settings=None, original_info=None) ->
 			}
 		).insert(ignore_permissions=True)
 	finally:
-		frappe.flags.whatsapp_raven_bridge_syncing = False
+		frappe.flags.whatsapp_raven_bridge_syncing = previous_syncing
 
-	set_raven_message_timestamp(raven_message.name, original_datetime)
+	if preserve_raven_timestamps:
+		set_raven_message_timestamp(raven_message.name, original_datetime)
 
-	if thread_parent_created and conversation.parent_raven_message:
-		set_raven_message_timestamp(conversation.parent_raven_message, original_datetime)
-	if thread_channel_created and conversation.raven_channel:
-		frappe.db.sql(
-			"""
-			update `tabRaven Channel`
-			set creation=%s, modified=%s
-			where name=%s
-			""",
-			(original_datetime, original_datetime, conversation.raven_channel),
-		)
+	if preserve_raven_timestamps:
+		if thread_parent_created and conversation.parent_raven_message:
+			set_raven_message_timestamp(conversation.parent_raven_message, original_datetime)
+		if thread_channel_created and conversation.raven_channel:
+			frappe.db.sql(
+				"""
+				update `tabRaven Channel`
+				set creation=%s, modified=%s
+				where name=%s
+				""",
+				(original_datetime, original_datetime, conversation.raven_channel),
+			)
 
 	direction = _map_link_direction(doc.get("type"))
 	message_link = create_message_link(
@@ -525,7 +558,7 @@ def _map_metadata_direction(message_type: str) -> str:
 
 def _normalize_direction(direction: str | None) -> str | None:
 	value = cstr(direction or "").strip().lower()
-	if not value:
+	if not value or value == "both":
 		return None
 	if value in ("incoming", "inbound"):
 		return "Incoming"
@@ -608,3 +641,239 @@ def _get_route_inbox_channel(route_name: str | None) -> str | None:
 	if not route_name:
 		return None
 	return frappe.db.get_value("WhatsApp Raven Account Route", route_name, "inbox_channel")
+
+
+def preview_missed_whatsapp_messages(
+	lookback_hours: int = 24,
+	limit: int = 200,
+	direction: str = "Both",
+	whatsapp_account: str | None = None,
+) -> frappe._dict:
+	"""Preview recent unlinked WhatsApp messages for reconciliation."""
+	lookback_hours = max(1, min(int(lookback_hours or 24), 720))
+	limit = max(1, min(int(limit or 200), 1000))
+	to_dt = now_datetime()
+	from_dt = add_to_date(to_dt, hours=-lookback_hours)
+	return backfill_whatsapp_messages(
+		whatsapp_account=whatsapp_account,
+		from_datetime=from_dt,
+		to_datetime=to_dt,
+		direction=_direction_for_backfill_query(direction),
+		limit=limit,
+		dry_run=1,
+	)
+
+
+def enqueue_scheduled_backfill(
+	*,
+	whatsapp_account: str | None = None,
+	phone_number: str | None = None,
+	from_datetime=None,
+	to_datetime=None,
+	direction: str | None = None,
+	limit: int = 200,
+	preserve_raven_timestamps: int = 1,
+	scheduled: int = 1,
+) -> frappe._dict:
+	"""Enqueue backfill job with cross-run lock to avoid overlaps."""
+	lock = acquire_backfill_lock()
+	if not lock.get("acquired"):
+		return frappe._dict(
+			{
+				"status": "skipped_locked",
+				"lock": lock,
+			}
+		)
+
+	try:
+		job = frappe.enqueue(
+			method="whatsapp_raven_bridge.bridge.backfill._run_backfill_job",
+			queue="long",
+			timeout=60 * 30,
+			whatsapp_account=whatsapp_account,
+			phone_number=phone_number,
+			from_datetime=from_datetime,
+			to_datetime=to_datetime,
+			direction=direction,
+			limit=limit,
+			preserve_raven_timestamps=preserve_raven_timestamps,
+			scheduled=scheduled,
+			lock_key=BACKFILL_LOCK_KEY,
+		)
+	except Exception:
+		release_backfill_lock(BACKFILL_LOCK_KEY)
+		raise
+	job_id = getattr(job, "id", None) or cstr(job)
+	return frappe._dict({"status": "queued", "job_id": job_id, "lock": lock})
+
+
+def run_scheduled_backfill_if_due() -> frappe._dict:
+	"""Scheduler entrypoint; no-op unless due and enabled in settings."""
+	settings = get_settings()
+	if not settings:
+		return frappe._dict({"status": "skipped_missing_settings"})
+	if not int(settings.get("enable_scheduled_backfill") or 0):
+		return frappe._dict({"status": "skipped_disabled"})
+
+	interval = cstr(settings.get("scheduled_backfill_interval") or "Hourly").strip()
+	if interval not in SCHEDULE_INTERVAL_MINUTES:
+		interval = "Hourly"
+	last_run = settings.get("last_scheduled_backfill_at")
+	if last_run:
+		next_due_at = add_to_date(last_run, minutes=SCHEDULE_INTERVAL_MINUTES[interval])
+		if now_datetime() < get_datetime(next_due_at):
+			return frappe._dict({"status": "skipped_not_due", "next_due_at": next_due_at})
+
+	lookback_hours = max(1, min(int(settings.get("scheduled_backfill_lookback_hours") or 24), 720))
+	limit = max(1, min(int(settings.get("scheduled_backfill_limit") or 200), 1000))
+	direction = cstr(settings.get("scheduled_backfill_direction") or "Both")
+	from_dt = add_to_date(now_datetime(), hours=-lookback_hours)
+	to_dt = now_datetime()
+
+	queued = enqueue_scheduled_backfill(
+		whatsapp_account=None,
+		from_datetime=from_dt,
+		to_datetime=to_dt,
+		direction=_direction_for_backfill_query(direction),
+		limit=limit,
+		preserve_raven_timestamps=1,
+		scheduled=1,
+	)
+
+	if queued.get("status") == "queued":
+		_update_scheduled_backfill_state(
+			status="queued",
+			job_id=queued.get("job_id"),
+			summary={
+				"interval": interval,
+				"lookback_hours": lookback_hours,
+				"limit": limit,
+				"direction": direction,
+				"from_datetime": cstr(from_dt),
+				"to_datetime": cstr(to_dt),
+			},
+		)
+		return queued
+
+	if queued.get("status") == "skipped_locked":
+		_update_scheduled_backfill_state(status="skipped_locked", summary=queued)
+	return queued
+
+
+def run_scheduled_backfill_now() -> frappe._dict:
+	"""Manual trigger helper for admins/UI to run scheduled reconciliation behavior now."""
+	settings = get_settings()
+	lookback_hours = max(1, min(int((settings or {}).get("scheduled_backfill_lookback_hours") or 24), 720))
+	limit = max(1, min(int((settings or {}).get("scheduled_backfill_limit") or 200), 1000))
+	direction = cstr((settings or {}).get("scheduled_backfill_direction") or "Both")
+	from_dt = add_to_date(now_datetime(), hours=-lookback_hours)
+	to_dt = now_datetime()
+	queued = enqueue_scheduled_backfill(
+		whatsapp_account=None,
+		from_datetime=from_dt,
+		to_datetime=to_dt,
+		direction=_direction_for_backfill_query(direction),
+		limit=limit,
+		preserve_raven_timestamps=1,
+		scheduled=1,
+	)
+	if queued.get("status") == "queued":
+		_update_scheduled_backfill_state(
+			status="queued_manual",
+			job_id=queued.get("job_id"),
+			summary={
+				"lookback_hours": lookback_hours,
+				"limit": limit,
+				"direction": direction,
+				"from_datetime": cstr(from_dt),
+				"to_datetime": cstr(to_dt),
+			},
+		)
+	return queued
+
+
+def acquire_backfill_lock(
+	lock_key: str = BACKFILL_LOCK_KEY,
+	timeout_seconds: int = BACKFILL_LOCK_TIMEOUT_SECONDS,
+) -> frappe._dict:
+	"""Acquire lock for backfill runs; stale locks are replaced."""
+	cache = frappe.cache()
+	now_ts = now_datetime()
+	current = cache.get_value(lock_key, shared=True)
+	current_data = _as_dict(current)
+	created_at = get_datetime(current_data.get("created_at")) if current_data.get("created_at") else None
+	if created_at:
+		age_seconds = (now_ts - created_at).total_seconds()
+		if age_seconds < timeout_seconds and cstr(current_data.get("status") or "").lower() == "running":
+			return frappe._dict({"acquired": False, "lock_key": lock_key, "lock_data": current_data})
+
+	lock_data = {
+		"status": "running",
+		"created_at": now_ts.strftime("%Y-%m-%d %H:%M:%S"),
+		"user": frappe.session.user,
+	}
+	cache.set_value(lock_key, lock_data, shared=True, expires_in_sec=timeout_seconds + 300)
+	return frappe._dict({"acquired": True, "lock_key": lock_key, "lock_data": lock_data})
+
+
+def release_backfill_lock(lock_key: str = BACKFILL_LOCK_KEY) -> None:
+	"""Release backfill lock."""
+	frappe.cache().delete_value(lock_key, shared=True)
+
+
+def _run_backfill_job(
+	whatsapp_account: str | None = None,
+	phone_number: str | None = None,
+	from_datetime=None,
+	to_datetime=None,
+	direction: str | None = None,
+	limit: int = 200,
+	dry_run: int = 0,
+	preserve_raven_timestamps: int = 1,
+	scheduled: int = 1,
+	lock_key: str | None = BACKFILL_LOCK_KEY,
+) -> frappe._dict:
+	"""Background job wrapper for enqueued backfill runs."""
+	try:
+		result = backfill_whatsapp_messages(
+			whatsapp_account=whatsapp_account,
+			phone_number=phone_number,
+			from_datetime=from_datetime,
+			to_datetime=to_datetime,
+			direction=direction,
+			limit=limit,
+			dry_run=dry_run,
+			preserve_raven_timestamps=preserve_raven_timestamps,
+			scheduled=scheduled,
+			lock_key=lock_key,
+		)
+		if int(scheduled or 0):
+			_update_scheduled_backfill_state(status="completed", summary=result)
+		return result
+	except Exception:
+		if int(scheduled or 0):
+			_update_scheduled_backfill_state(status="failed", summary={"traceback": frappe.get_traceback()})
+		if lock_key:
+			release_backfill_lock(lock_key)
+		raise
+
+
+def _update_scheduled_backfill_state(*, status: str, summary: Any = None, job_id: str | None = None) -> None:
+	settings = get_settings()
+	if not settings:
+		return
+	settings.last_scheduled_backfill_at = now_datetime()
+	settings.last_scheduled_backfill_status = status
+	settings.last_scheduled_backfill_summary = (
+		json.dumps(summary, default=str, indent=2) if isinstance(summary, (dict, list, frappe._dict)) else cstr(summary)
+	)
+	if job_id:
+		settings.last_backfill_job_id = job_id
+	settings.save(ignore_permissions=True)
+
+
+def _direction_for_backfill_query(direction: str | None) -> str | None:
+	value = cstr(direction or "").strip()
+	if value in {"", "Both"}:
+		return None
+	return value
