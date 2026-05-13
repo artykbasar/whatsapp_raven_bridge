@@ -12,7 +12,6 @@ IDENTITY_FIELDS = (
 	"bridge_raven_user",
 	"default_raven_workspace",
 	"default_channel_type",
-	"default_whatsapp_account",
 	"conversation_strategy",
 	"bridge_system_user",
 )
@@ -98,7 +97,7 @@ def validate_settings_for_inbound():
 
 def validate_settings_for_outbound():
 	"""Return missing settings required for outbound Raven to WhatsApp sync."""
-	return _missing_fields(("default_whatsapp_account",))
+	return []
 
 
 def _missing_fields(required_fields):

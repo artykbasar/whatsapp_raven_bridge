@@ -821,7 +821,6 @@ class TestSetupBootstrapAndServiceUser(IntegrationTestCase):
 			"default_channel_type": settings.default_channel_type,
 			"bridge_raven_bot": settings.bridge_raven_bot,
 			"bridge_raven_user": settings.bridge_raven_user,
-			"default_whatsapp_account": settings.default_whatsapp_account,
 			"conversation_strategy": settings.conversation_strategy,
 			"enable_outbound_replies": settings.enable_outbound_replies,
 			"enable_start_conversation": settings.enable_start_conversation,

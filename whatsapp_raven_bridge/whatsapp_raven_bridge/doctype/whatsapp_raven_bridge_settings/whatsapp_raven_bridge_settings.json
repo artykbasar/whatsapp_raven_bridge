@@ -10,7 +10,6 @@
   "default_channel_type",
   "bridge_raven_bot",
   "bridge_raven_user",
-  "default_whatsapp_account",
   "conversation_strategy",
   "enable_outbound_replies",
   "enable_start_conversation",
@@ -64,12 +63,6 @@
    "fieldtype": "Link",
    "label": "Bridge Raven User",
    "options": "Raven User"
-  },
-  {
-   "fieldname": "default_whatsapp_account",
-   "fieldtype": "Link",
-   "label": "Default WhatsApp Account",
-   "options": "WhatsApp Account"
   },
   {
    "default": "Channel Per Contact",

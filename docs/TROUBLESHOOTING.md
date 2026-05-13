@@ -16,7 +16,7 @@ Check:
 - `WhatsApp Raven Bridge Settings.enabled = 1`
 - `WhatsApp Raven Bridge Settings.enable_outbound_replies = 1`
 - Route membership and `can_reply` for sender
-- `conversation.whatsapp_account` or fallback `default_whatsapp_account`
+- `conversation.whatsapp_account` is set (no global fallback)
 - `frappe_whatsapp` account health/credentials
 
 Also confirm the Raven message owner resolves to a route member Raven User.

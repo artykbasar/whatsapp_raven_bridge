@@ -22,9 +22,10 @@ Current behavior is text-only two-way sync.
 
 1. Assigned human user replies with Raven **Text** message in mapped channel/thread.
 2. Bridge validates route membership and `can_reply`.
-3. Bridge creates one outgoing **WhatsApp Message**.
-4. `frappe_whatsapp` sends it through WhatsApp Cloud API integration.
-5. Bridge creates one **WhatsApp Raven Message Link** for idempotency.
+3. Bridge requires `conversation.whatsapp_account` (no global fallback account).
+4. Bridge creates one outgoing **WhatsApp Message**.
+5. `frappe_whatsapp` sends it through WhatsApp Cloud API integration.
+6. Bridge creates one **WhatsApp Raven Message Link** for idempotency.
 
 ## Historical Backfill
 
