@@ -329,6 +329,52 @@ class TestHistoricalBackfill(IntegrationTestCase):
 		self.assertFalse(frappe.db.exists("WhatsApp Raven Message Link", {"whatsapp_message": msg_one.name}))
 		self.assertFalse(frappe.db.exists("WhatsApp Raven Message Link", {"whatsapp_message": msg_two.name}))
 
+	def test_i3_preview_zero_result_includes_diagnostics(self):
+		diagnostic_account = f"{self.PREFIX} Diagnostics Account"
+		if not frappe.db.exists("WhatsApp Account", diagnostic_account):
+			frappe.get_doc(
+				{
+					"doctype": "WhatsApp Account",
+					"account_name": diagnostic_account,
+					"status": "Active",
+					"url": "https://graph.facebook.com",
+					"version": "v17.0",
+					"phone_id": "warb4h_phone_diag",
+					"business_id": "warb4h_business_diag",
+					"app_id": "warb4h_app_diag",
+					"webhook_verify_token": "warb4h_verify_diag",
+				}
+			).insert(ignore_permissions=True)
+			set_encrypted_password("WhatsApp Account", diagnostic_account, "warb4h-token", "token")
+
+		previous_flag = getattr(frappe.flags, "whatsapp_raven_bridge_syncing", False)
+		try:
+			frappe.flags.whatsapp_raven_bridge_syncing = True
+			frappe.get_doc(
+				{
+					"doctype": "WhatsApp Message",
+					"type": "Incoming",
+					"content_type": "image",
+					"message_type": "Manual",
+					"from": "+447744100199",
+					"profile_name": f"{self.PREFIX} Diagnostic User",
+					"message": "non text payload",
+					"message_id": "wamid.warb4h.in.i301",
+					"whatsapp_account": diagnostic_account,
+				}
+			).insert(ignore_permissions=True)
+		finally:
+			frappe.flags.whatsapp_raven_bridge_syncing = previous_flag
+
+		result = preview_backfill(whatsapp_account=diagnostic_account, direction="Incoming", limit=None)
+		self.assertEqual(int(result.get("scanned", 0)), 0)
+		self.assertIn("diagnostics", result)
+		diagnostics = result.get("diagnostics", {})
+		self.assertIn("total_whatsapp_messages", diagnostics)
+		self.assertIn("text_whatsapp_messages", diagnostics)
+		self.assertIn("by_content_type", diagnostics)
+		self.assertIn("by_account_all_messages", diagnostics)
+
 	def test_j_run_backfill_permission_denied_for_non_system_manager(self):
 		self._insert_whatsapp_incoming("j01", "permission denied")
 		current_user = frappe.session.user

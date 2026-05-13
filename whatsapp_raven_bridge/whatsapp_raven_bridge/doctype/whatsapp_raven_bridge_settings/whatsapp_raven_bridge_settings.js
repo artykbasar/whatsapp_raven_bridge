@@ -143,6 +143,7 @@ function show_backfill_preview(summary) {
 	const byPhone = summary.by_phone || {};
 	const sample = summary.sample || [];
 	const byAccountDetail = summary.by_account_detail || {};
+	const diagnostics = summary.diagnostics || {};
 	const accountOptions = ["All Accounts"].concat(Object.keys(byAccount).sort());
 
 	const dialog = new frappe.ui.Dialog({
@@ -153,7 +154,7 @@ function show_backfill_preview(summary) {
 				fieldname: "account_filter",
 				label: __("WhatsApp Account Filter"),
 				fieldtype: "Select",
-				options: accountOptions,
+				options: accountOptions.join("\n"),
 				default: "All Accounts",
 				onchange: () => render_preview(),
 			},
@@ -227,6 +228,39 @@ function show_backfill_preview(summary) {
 					)
 					.join("")}</ul>`
 			: "<p>None</p>";
+		const diagnosticsHtml =
+			intOrZero(summary.scanned) === 0
+				? `
+					<div class="alert alert-info">
+						<p><strong>${__("No local text WhatsApp Message records were found for preview.")}</strong></p>
+						<p>${__(
+							"This preview imports existing local WhatsApp Message records only and currently supports text messages."
+						)}</p>
+					</div>
+					<table class="table table-bordered">
+						<tbody>
+							<tr><td><strong>${__("Total WhatsApp Message Rows")}</strong></td><td>${frappe.utils.escape_html(String(diagnostics.total_whatsapp_messages || 0))}</td></tr>
+							<tr><td><strong>${__("Text WhatsApp Message Rows")}</strong></td><td>${frappe.utils.escape_html(String(diagnostics.text_whatsapp_messages || 0))}</td></tr>
+						</tbody>
+					</table>
+					<h5>${__("By Content Type")}</h5>
+					${
+						Object.keys(diagnostics.by_content_type || {}).length
+							? `<ul>${Object.entries(diagnostics.by_content_type || {})
+									.map(([k, v]) => `<li>${frappe.utils.escape_html(k)}: ${frappe.utils.escape_html(String(v))}</li>`)
+									.join("")}</ul>`
+							: "<p>None</p>"
+					}
+					<h5>${__("By Account (All Messages)")}</h5>
+					${
+						Object.keys(diagnostics.by_account_all_messages || {}).length
+							? `<ul>${Object.entries(diagnostics.by_account_all_messages || {})
+									.map(([k, v]) => `<li>${frappe.utils.escape_html(k)}: ${frappe.utils.escape_html(String(v))}</li>`)
+									.join("")}</ul>`
+							: "<p>None</p>"
+					}
+				`
+				: "";
 
 		dialog.fields_dict.preview_html.$wrapper.html(`
 			${tableHtml}
@@ -241,6 +275,7 @@ function show_backfill_preview(summary) {
 			${phoneHtml}
 			<h5>${__("Sample Rows")}</h5>
 			${sampleHtml}
+			${diagnosticsHtml}
 		`);
 	};
 
@@ -276,4 +311,9 @@ async function sync_all_history_now(frm) {
 
 function bool_to_yes_no(value) {
 	return value ? "Yes" : "No";
+}
+
+function intOrZero(value) {
+	const numeric = Number(value);
+	return Number.isFinite(numeric) ? numeric : 0;
 }

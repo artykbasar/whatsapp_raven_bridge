@@ -639,7 +639,59 @@ def _build_preview_summary(candidates: list[frappe._dict]) -> frappe._dict:
 			summary.sample.append(row)
 		if len(account_detail["sample"]) < 25:
 			account_detail["sample"].append(row)
+	if int(summary.scanned or 0) == 0:
+		summary["diagnostics"] = _build_preview_diagnostics()
 	return summary
+
+
+def _build_preview_diagnostics() -> dict[str, Any]:
+	total_rows = frappe.db.sql(
+		"""
+		select count(*) as count
+		from `tabWhatsApp Message`
+		""",
+		as_dict=True,
+	)
+	total_whatsapp_messages = int((total_rows[0] or {}).get("count") or 0) if total_rows else 0
+
+	text_rows = frappe.db.sql(
+		"""
+		select count(*) as count
+		from `tabWhatsApp Message`
+		where content_type='text'
+		""",
+		as_dict=True,
+	)
+	text_whatsapp_messages = int((text_rows[0] or {}).get("count") or 0) if text_rows else 0
+
+	by_content_type_rows = frappe.db.sql(
+		"""
+		select coalesce(content_type, '<blank>') as content_type, count(*) as count
+		from `tabWhatsApp Message`
+		group by coalesce(content_type, '<blank>')
+		order by count(*) desc, content_type asc
+		""",
+		as_dict=True,
+	)
+	by_content_type = {cstr(row.content_type): int(row.count or 0) for row in by_content_type_rows}
+
+	by_account_rows = frappe.db.sql(
+		"""
+		select coalesce(whatsapp_account, '<blank>') as whatsapp_account, count(*) as count
+		from `tabWhatsApp Message`
+		group by coalesce(whatsapp_account, '<blank>')
+		order by count(*) desc, whatsapp_account asc
+		""",
+		as_dict=True,
+	)
+	by_account_all_messages = {cstr(row.whatsapp_account): int(row.count or 0) for row in by_account_rows}
+
+	return {
+		"total_whatsapp_messages": total_whatsapp_messages,
+		"text_whatsapp_messages": text_whatsapp_messages,
+		"by_content_type": by_content_type,
+		"by_account_all_messages": by_account_all_messages,
+	}
 
 
 def _update_conversation_backfill_state(conversation, source_doc, raven_message, original_datetime):
