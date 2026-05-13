@@ -27,18 +27,6 @@ def get_route_for_whatsapp_account(whatsapp_account):
 	return frappe.get_doc(ROUTE_DOCTYPE, route_name) if route_name else None
 
 
-def get_default_route():
-	"""Return default enabled route when an account-specific route is not explicitly passed."""
-	settings = get_settings()
-	if settings and settings.get("default_whatsapp_account"):
-		route = get_route_for_whatsapp_account(settings.get("default_whatsapp_account"))
-		if route:
-			return route
-
-	route_name = frappe.db.get_value(ROUTE_DOCTYPE, {"enabled": 1}, "name", order_by="modified desc")
-	return frappe.get_doc(ROUTE_DOCTYPE, route_name) if route_name else None
-
-
 def get_or_create_inbox_channel(route, use_bridge_context: bool = True):
 	"""Return the route inbox channel, creating/reusing one when missing."""
 	route_doc = _get_route_doc(route)

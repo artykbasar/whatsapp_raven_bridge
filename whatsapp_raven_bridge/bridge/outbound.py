@@ -95,8 +95,6 @@ def process_outgoing_raven_message(doc):
 		settings=settings,
 		plain_text=plain_text,
 	)
-	if not payload.get("whatsapp_account"):
-		return "skipped_missing_whatsapp_account"
 
 	try:
 		frappe.flags.whatsapp_raven_bridge_syncing = True
@@ -167,7 +165,9 @@ def extract_plain_text_from_raven_message(doc):
 def build_whatsapp_outbound_payload(doc, conversation, settings, plain_text=None):
 	"""Build outgoing WhatsApp Message insert payload."""
 	message_text = plain_text if plain_text is not None else extract_plain_text_from_raven_message(doc)
-	whatsapp_account = conversation.get("whatsapp_account") or settings.get("default_whatsapp_account")
+	whatsapp_account = cstr(conversation.get("whatsapp_account") or "").strip()
+	if not whatsapp_account:
+		frappe.throw(_("Cannot send WhatsApp reply because the bridge conversation has no WhatsApp Account."))
 
 	payload = {
 		"doctype": "WhatsApp Message",

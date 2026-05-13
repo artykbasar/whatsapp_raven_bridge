@@ -428,7 +428,6 @@ class TestAccountRouteDesign(IntegrationTestCase):
 			"default_channel_type": settings.default_channel_type,
 			"bridge_raven_bot": settings.bridge_raven_bot,
 			"bridge_raven_user": settings.bridge_raven_user,
-			"default_whatsapp_account": settings.default_whatsapp_account,
 			"conversation_strategy": settings.conversation_strategy,
 			"enable_outbound_replies": settings.enable_outbound_replies,
 			"enable_scheduled_backfill": settings.enable_scheduled_backfill,
@@ -472,7 +471,6 @@ class TestAccountRouteDesign(IntegrationTestCase):
 		settings.bridge_raven_bot = cls.BOT_NAME
 		settings.bridge_raven_user = bot.raven_user or cls.BOT_NAME
 		settings.bridge_system_user = None
-		settings.default_whatsapp_account = cls.ACCOUNT_NAME
 		settings.conversation_strategy = "Channel Per Contact"
 		settings.enable_outbound_replies = 1
 		settings.set("default_channel_members", [])

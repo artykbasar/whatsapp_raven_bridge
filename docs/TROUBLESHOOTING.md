@@ -16,7 +16,7 @@ Check:
 - `WhatsApp Raven Bridge Settings.enabled = 1`
 - `WhatsApp Raven Bridge Settings.enable_outbound_replies = 1`
 - Route membership and `can_reply` for sender
-- `conversation.whatsapp_account` or fallback `default_whatsapp_account`
+- `conversation.whatsapp_account` is set (no global fallback)
 - `frappe_whatsapp` account health/credentials
 
 Also confirm the Raven message owner resolves to a route member Raven User.
@@ -49,7 +49,7 @@ Backfill should never call WhatsApp send. It imports historical rows only.
 
 Verify:
 
-- Backfill API used (`preview_backfill` / `run_backfill`)
+- Backfill API used (`preview_all_message_history`, `enqueue_sync_all_message_history`, or scoped `run_backfill`)
 - No new outbound WhatsApp rows with `reference_doctype = "Raven Message"` created by backfill run
 
 ## Scheduled backfill is not running
@@ -64,11 +64,13 @@ Check **WhatsApp Raven Bridge Settings**:
 
 Also verify scheduler is running in bench (`schedule` process via honcho/supervisor).
 
-You can trigger it manually:
+You can trigger scheduled policy manually:
 
 ```bash
 bench --site SITE execute whatsapp_raven_bridge.api.backfill.run_scheduled_backfill_now
 ```
+
+For full-history import from Desk, use **Sync All Message History Now**.
 
 ## Tests are making real Meta calls
 
@@ -91,7 +93,7 @@ Set `bridge_system_user` in **WhatsApp Raven Bridge Settings**.
 
 Bridge infrastructure writes (workspace/channel memberships, inbox/thread setup) run under this user context when configured. This does not change outbound permission checks, which still use the actual Raven message owner.
 
-You can set this automatically with the Settings bootstrap dialog or CLI bootstrap.
+You can set this automatically with **Run Bootstrap Setup** on Settings or CLI bootstrap.
 
 ## What setup cannot be fully automated
 

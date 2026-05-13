@@ -6,3 +6,4 @@
 # Patches added in this section will be executed after doctypes are migrated
 whatsapp_raven_bridge.patches.fix_stale_bridge_system_user
 whatsapp_raven_bridge.patches.fix_stale_bridge_system_user_v2
+whatsapp_raven_bridge.patches.remove_default_whatsapp_account_setting

@@ -392,6 +392,32 @@ class TestTwoWayMVPHardening(IntegrationTestCase):
 		result = handle_raven_message_after_insert(raven_message)
 		self.assertIsNone(result)
 
+	def test_14_outbound_requires_conversation_whatsapp_account(self):
+		conversation = self._ensure_conversation("14")
+		conversation.whatsapp_account = None
+		conversation.save(ignore_permissions=True)
+
+		before_whatsapp = frappe.db.count("WhatsApp Message")
+		raven_message = self._insert_raven_message(
+			channel_id=conversation.raven_channel,
+			text=f"<p>{self.PREFIX} outbound 14 missing account</p>",
+			is_bot_message=0,
+		)
+
+		self.assertFalse(
+			frappe.db.exists("WhatsApp Raven Message Link", {"raven_message": raven_message.name})
+		)
+		self.assertFalse(
+			frappe.db.exists(
+				"WhatsApp Message",
+				{"reference_doctype": "Raven Message", "reference_name": raven_message.name},
+			)
+		)
+		self.assertEqual(frappe.db.count("WhatsApp Message"), before_whatsapp)
+
+		with self.assertRaises(frappe.ValidationError):
+			process_outgoing_raven_message(raven_message)
+
 	@classmethod
 	def _snapshot_settings(cls):
 		settings = frappe.get_single("WhatsApp Raven Bridge Settings")
@@ -402,7 +428,6 @@ class TestTwoWayMVPHardening(IntegrationTestCase):
 			"default_channel_type": settings.default_channel_type,
 			"bridge_raven_bot": settings.bridge_raven_bot,
 			"bridge_raven_user": settings.bridge_raven_user,
-			"default_whatsapp_account": settings.default_whatsapp_account,
 			"conversation_strategy": settings.conversation_strategy,
 			"enable_outbound_replies": settings.enable_outbound_replies,
 			"enable_scheduled_backfill": settings.enable_scheduled_backfill,
@@ -529,7 +554,6 @@ class TestTwoWayMVPHardening(IntegrationTestCase):
 		settings.bridge_raven_bot = cls.bridge_raven_bot
 		settings.bridge_raven_user = cls.bridge_raven_user
 		settings.bridge_system_user = None
-		settings.default_whatsapp_account = cls.whatsapp_account
 		settings.conversation_strategy = "Channel Per Contact"
 		settings.enable_outbound_replies = 1
 		settings.set("default_channel_members", [])
@@ -635,6 +659,7 @@ class TestTwoWayMVPHardening(IntegrationTestCase):
 		self._delete_raven_messages()
 		self._delete_whatsapp_messages()
 		self._delete_conversations_and_channels()
+		self._delete_account_routes()
 
 	def _delete_message_links(self):
 		links = frappe.get_all(
@@ -703,6 +728,16 @@ class TestTwoWayMVPHardening(IntegrationTestCase):
 		for name in conversations:
 			if frappe.db.exists("WhatsApp Raven Conversation", name):
 				frappe.delete_doc("WhatsApp Raven Conversation", name, force=True)
+
+	def _delete_account_routes(self):
+		route_names = frappe.get_all(
+			"WhatsApp Raven Account Route",
+			filters={"whatsapp_account": self.ACCOUNT_NAME},
+			pluck="name",
+		)
+		for route_name in route_names:
+			if frappe.db.exists("WhatsApp Raven Account Route", route_name):
+				frappe.delete_doc("WhatsApp Raven Account Route", route_name, force=True)
 
 	def _test_slug(self):
 		return self._testMethodName.replace("test_", "").replace("_", "-")

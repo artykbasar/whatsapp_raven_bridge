@@ -37,14 +37,14 @@ def backfill_whatsapp_messages(
 	from_datetime: str | datetime | None = None,
 	to_datetime: str | datetime | None = None,
 	direction: str | None = None,
-	limit: int = 500,
+	limit: int | None = 500,
 	dry_run: int = 1,
 	preserve_raven_timestamps: int = 1,
 	scheduled: int = 0,
 	lock_key: str | None = None,
 ) -> frappe._dict:
 	"""Preview or run backfill of historical WhatsApp Message rows."""
-	limit = max(1, min(int(limit or 500), 5000))
+	limit = _normalize_backfill_limit(limit)
 	dry_run = 1 if int(dry_run or 0) else 0
 	preserve_raven_timestamps = 1 if int(preserve_raven_timestamps or 0) else 0
 	scheduled = 1 if int(scheduled or 0) else 0
@@ -155,10 +155,10 @@ def get_backfill_candidates(
 	from_datetime: str | datetime | None = None,
 	to_datetime: str | datetime | None = None,
 	direction: str | None = None,
-	limit: int = 500,
+	limit: int | None = 500,
 ) -> list[frappe._dict]:
 	"""Return WhatsApp Message docs eligible for historical text backfill."""
-	limit = max(1, min(int(limit or 500), 5000))
+	limit = _normalize_backfill_limit(limit)
 	normalized_phone = normalize_phone_number(phone_number) if phone_number else ""
 	from_dt = get_datetime(from_datetime) if from_datetime else None
 	to_dt = get_datetime(to_datetime) if to_datetime else None
@@ -174,7 +174,8 @@ def get_backfill_candidates(
 	if to_dt:
 		filters.append(["creation", "<=", to_dt])
 
-	fetch_limit = limit if not normalized_phone else max(limit * 5, 1000)
+	base_limit = limit if limit is not None else 0
+	fetch_limit = (base_limit if not normalized_phone else max(base_limit * 5, 1000)) if base_limit else None
 	rows = frappe.get_all(
 		"WhatsApp Message",
 		filters=filters,
@@ -211,7 +212,7 @@ def get_backfill_candidates(
 			cstr(x.doc.name),
 		)
 	)
-	return candidates[:limit]
+	return candidates if limit is None else candidates[:limit]
 
 
 def process_backfill_whatsapp_message(
@@ -589,35 +590,108 @@ def _build_preview_summary(candidates: list[frappe._dict]) -> frappe._dict:
 			"by_direction": {"Incoming": 0, "Outgoing": 0},
 			"by_phone": {},
 			"sample": [],
+			"by_account_detail": {},
 		}
 	)
 	for item in candidates:
 		doc = item.doc
+		account = cstr(doc.get("whatsapp_account") or "No Account")
+		direction = cstr(doc.get("type") or "Unknown")
+		phone = normalize_phone_number(doc.get("from") or doc.get("to"))
+		account_detail = summary.by_account_detail.get(account)
+		if not account_detail:
+			account_detail = {
+				"scanned": 0,
+				"eligible": 0,
+				"skipped_existing": 0,
+				"by_direction": {},
+				"by_phone": {},
+				"sample": [],
+			}
+			summary.by_account_detail[account] = account_detail
+
+		account_detail["scanned"] = int(account_detail.get("scanned", 0)) + 1
+		account_detail["by_direction"][direction] = int(account_detail["by_direction"].get(direction, 0)) + 1
+		account_detail["by_phone"][phone] = int(account_detail["by_phone"].get(phone, 0)) + 1
+
+		row = {
+			"whatsapp_message": doc.name,
+			"message_id": doc.get("message_id"),
+			"type": doc.get("type"),
+			"phone": phone,
+			"whatsapp_account": doc.get("whatsapp_account"),
+			"original_datetime": cstr(item.original_info.original_datetime),
+		}
+
 		if get_existing_message_link_by_whatsapp_message(doc.name) or (
 			doc.get("message_id") and get_existing_message_link_by_whatsapp_message_id(doc.get("message_id"))
 		):
 			summary.skipped_existing += 1
+			account_detail["skipped_existing"] = int(account_detail.get("skipped_existing", 0)) + 1
 			continue
 		summary.eligible += 1
-		account = cstr(doc.get("whatsapp_account") or "No Account")
-		direction = cstr(doc.get("type") or "Unknown")
-		phone = normalize_phone_number(doc.get("from") or doc.get("to"))
+		account_detail["eligible"] = int(account_detail.get("eligible", 0)) + 1
 		summary.by_account[account] = int(summary.by_account.get(account, 0)) + 1
 		summary.by_direction[direction] = int(summary.by_direction.get(direction, 0)) + 1
 		summary.by_phone[phone] = int(summary.by_phone.get(phone, 0)) + 1
 
 		if len(summary.sample) < 25:
-			summary.sample.append(
-				{
-					"whatsapp_message": doc.name,
-					"message_id": doc.get("message_id"),
-					"type": doc.get("type"),
-					"phone": phone,
-					"whatsapp_account": doc.get("whatsapp_account"),
-					"original_datetime": cstr(item.original_info.original_datetime),
-				}
-			)
+			summary.sample.append(row)
+		if len(account_detail["sample"]) < 25:
+			account_detail["sample"].append(row)
+	if int(summary.scanned or 0) == 0:
+		summary["diagnostics"] = _build_preview_diagnostics()
 	return summary
+
+
+def _build_preview_diagnostics() -> dict[str, Any]:
+	total_rows = frappe.db.sql(
+		"""
+		select count(*) as count
+		from `tabWhatsApp Message`
+		""",
+		as_dict=True,
+	)
+	total_whatsapp_messages = int((total_rows[0] or {}).get("count") or 0) if total_rows else 0
+
+	text_rows = frappe.db.sql(
+		"""
+		select count(*) as count
+		from `tabWhatsApp Message`
+		where content_type='text'
+		""",
+		as_dict=True,
+	)
+	text_whatsapp_messages = int((text_rows[0] or {}).get("count") or 0) if text_rows else 0
+
+	by_content_type_rows = frappe.db.sql(
+		"""
+		select coalesce(content_type, '<blank>') as content_type, count(*) as count
+		from `tabWhatsApp Message`
+		group by coalesce(content_type, '<blank>')
+		order by count(*) desc, content_type asc
+		""",
+		as_dict=True,
+	)
+	by_content_type = {cstr(row.content_type): int(row.count or 0) for row in by_content_type_rows}
+
+	by_account_rows = frappe.db.sql(
+		"""
+		select coalesce(whatsapp_account, '<blank>') as whatsapp_account, count(*) as count
+		from `tabWhatsApp Message`
+		group by coalesce(whatsapp_account, '<blank>')
+		order by count(*) desc, whatsapp_account asc
+		""",
+		as_dict=True,
+	)
+	by_account_all_messages = {cstr(row.whatsapp_account): int(row.count or 0) for row in by_account_rows}
+
+	return {
+		"total_whatsapp_messages": total_whatsapp_messages,
+		"text_whatsapp_messages": text_whatsapp_messages,
+		"by_content_type": by_content_type,
+		"by_account_all_messages": by_account_all_messages,
+	}
 
 
 def _update_conversation_backfill_state(conversation, source_doc, raven_message, original_datetime):
@@ -671,7 +745,7 @@ def enqueue_scheduled_backfill(
 	from_datetime=None,
 	to_datetime=None,
 	direction: str | None = None,
-	limit: int = 200,
+	limit: int | None = 200,
 	preserve_raven_timestamps: int = 1,
 	scheduled: int = 1,
 ) -> frappe._dict:
@@ -827,7 +901,7 @@ def _run_backfill_job(
 	from_datetime=None,
 	to_datetime=None,
 	direction: str | None = None,
-	limit: int = 200,
+	limit: int | None = 200,
 	dry_run: int = 0,
 	preserve_raven_timestamps: int = 1,
 	scheduled: int = 1,
@@ -902,3 +976,15 @@ def _direction_for_backfill_query(direction: str | None) -> str | None:
 	if value in {"", "Both"}:
 		return None
 	return value
+
+
+def _normalize_backfill_limit(limit: int | None) -> int | None:
+	if limit is None:
+		return None
+	text = cstr(limit).strip()
+	if not text:
+		return None
+	value = int(text)
+	if value <= 0:
+		return None
+	return min(value, 5000)

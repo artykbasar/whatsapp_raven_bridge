@@ -33,7 +33,6 @@ Open **WhatsApp Raven Bridge Settings** and set:
 - optional fallback defaults:
   - `default_raven_workspace`
   - `default_channel_type`
-  - `default_whatsapp_account`
   - `conversation_strategy`
 
 Install/default behavior:
@@ -56,6 +55,7 @@ Create one route per WhatsApp account in **WhatsApp Raven Account Route**:
   - `can_reply`
 
 Route memberships control visibility and outbound permissions.
+Outbound replies always use the `whatsapp_account` stored on each bridge conversation.
 
 ## 5) Bootstrap Alternative (Optional)
 
@@ -78,11 +78,9 @@ Desk-friendly setup is available from **WhatsApp Raven Bridge Settings**:
 - **Check Setup Status**
 - **Run Bootstrap Setup**
 - **Preview Backfill**
-- **Run Backfill Now**
-- **Run Scheduled Backfill Now**
+- **Sync All Message History Now**
 
-The setup dialog supports one primary route member for MVP simplicity.
-Use CLI bootstrap (`route_members`) when you need to seed multiple members at once.
+`Run Bootstrap Setup` runs with no dialog and bootstraps all available WhatsApp Accounts with default route membership to Administrator.
 
 ## Production Recommendation
 

@@ -10,7 +10,13 @@ from frappe.utils.password import set_encrypted_password
 
 import whatsapp_raven_bridge.api.backfill as backfill_api
 import whatsapp_raven_bridge.bridge.backfill as backfill_module
-from whatsapp_raven_bridge.api.backfill import enqueue_backfill, preview_backfill, run_backfill
+from whatsapp_raven_bridge.api.backfill import (
+	enqueue_backfill,
+	enqueue_sync_all_message_history,
+	preview_all_message_history,
+	preview_backfill,
+	run_backfill,
+)
 from whatsapp_raven_bridge.bridge.backfill import (
 	BACKFILL_LOCK_KEY,
 	_run_backfill_job,
@@ -259,6 +265,116 @@ class TestHistoricalBackfill(IntegrationTestCase):
 		self.assertEqual(frappe.db.count("Raven Message"), before_raven)
 		self.assertFalse(frappe.db.exists("WhatsApp Raven Message Link", {"whatsapp_message": msg.name}))
 
+	def test_i2_preview_all_message_history_uses_all_accounts_and_no_limit(self):
+		second_account = f"{self.PREFIX} Second Account"
+		if not frappe.db.exists("WhatsApp Account", second_account):
+			frappe.get_doc(
+				{
+					"doctype": "WhatsApp Account",
+					"account_name": second_account,
+					"status": "Active",
+					"url": "https://graph.facebook.com",
+					"version": "v17.0",
+					"phone_id": "warb4h_phone_id_2",
+					"business_id": "warb4h_business_id_2",
+					"app_id": "warb4h_app_id_2",
+					"webhook_verify_token": "warb4h_verify_token_2",
+				}
+			).insert(ignore_permissions=True)
+			set_encrypted_password("WhatsApp Account", second_account, "warb4h-token", "token")
+
+		msg_one = self._insert_whatsapp_incoming("i201", "preview all one")
+		previous_flag = getattr(frappe.flags, "whatsapp_raven_bridge_syncing", False)
+		try:
+			frappe.flags.whatsapp_raven_bridge_syncing = True
+			msg_two = frappe.get_doc(
+				{
+					"doctype": "WhatsApp Message",
+					"type": "Incoming",
+					"content_type": "text",
+					"message_type": "Manual",
+					"from": "+447744100099",
+					"profile_name": f"{self.PREFIX} Customer 2",
+					"message": "preview all two",
+					"message_id": "wamid.warb4h.in.i202",
+					"whatsapp_account": second_account,
+				}
+			).insert(ignore_permissions=True)
+		finally:
+			frappe.flags.whatsapp_raven_bridge_syncing = previous_flag
+
+		before_links = frappe.db.count("WhatsApp Raven Message Link")
+		before_raven = frappe.db.count("Raven Message")
+		result = preview_all_message_history()
+		self.assertEqual(int(result.get("dry_run", 0)), 1)
+		self.assertGreaterEqual(int(result.get("scanned", 0)), 2)
+		self.assertGreaterEqual(int(result.get("eligible", 0)), 2)
+		self.assertIn(self.ACCOUNT_NAME, result.get("by_account", {}))
+		self.assertIn(second_account, result.get("by_account", {}))
+		self.assertIn("by_account_detail", result)
+		self.assertIn(self.ACCOUNT_NAME, result.get("by_account_detail", {}))
+		self.assertIn(second_account, result.get("by_account_detail", {}))
+		first_detail = result["by_account_detail"][self.ACCOUNT_NAME]
+		second_detail = result["by_account_detail"][second_account]
+		self.assertGreaterEqual(int(first_detail.get("scanned", 0)), 1)
+		self.assertGreaterEqual(int(first_detail.get("eligible", 0)), 1)
+		self.assertGreaterEqual(int(second_detail.get("scanned", 0)), 1)
+		self.assertGreaterEqual(int(second_detail.get("eligible", 0)), 1)
+		self.assertIn("447744100001", first_detail.get("by_phone", {}))
+		self.assertIn("447744100099", second_detail.get("by_phone", {}))
+		self.assertTrue(any(row.get("whatsapp_message") == msg_one.name for row in first_detail.get("sample", [])))
+		self.assertTrue(any(row.get("whatsapp_message") == msg_two.name for row in second_detail.get("sample", [])))
+		self.assertEqual(frappe.db.count("WhatsApp Raven Message Link"), before_links)
+		self.assertEqual(frappe.db.count("Raven Message"), before_raven)
+		self.assertFalse(frappe.db.exists("WhatsApp Raven Message Link", {"whatsapp_message": msg_one.name}))
+		self.assertFalse(frappe.db.exists("WhatsApp Raven Message Link", {"whatsapp_message": msg_two.name}))
+
+	def test_i3_preview_zero_result_includes_diagnostics(self):
+		diagnostic_account = f"{self.PREFIX} Diagnostics Account"
+		if not frappe.db.exists("WhatsApp Account", diagnostic_account):
+			frappe.get_doc(
+				{
+					"doctype": "WhatsApp Account",
+					"account_name": diagnostic_account,
+					"status": "Active",
+					"url": "https://graph.facebook.com",
+					"version": "v17.0",
+					"phone_id": "warb4h_phone_diag",
+					"business_id": "warb4h_business_diag",
+					"app_id": "warb4h_app_diag",
+					"webhook_verify_token": "warb4h_verify_diag",
+				}
+			).insert(ignore_permissions=True)
+			set_encrypted_password("WhatsApp Account", diagnostic_account, "warb4h-token", "token")
+
+		previous_flag = getattr(frappe.flags, "whatsapp_raven_bridge_syncing", False)
+		try:
+			frappe.flags.whatsapp_raven_bridge_syncing = True
+			frappe.get_doc(
+				{
+					"doctype": "WhatsApp Message",
+					"type": "Incoming",
+					"content_type": "image",
+					"message_type": "Manual",
+					"from": "+447744100199",
+					"profile_name": f"{self.PREFIX} Diagnostic User",
+					"message": "non text payload",
+					"message_id": "wamid.warb4h.in.i301",
+					"whatsapp_account": diagnostic_account,
+				}
+			).insert(ignore_permissions=True)
+		finally:
+			frappe.flags.whatsapp_raven_bridge_syncing = previous_flag
+
+		result = preview_backfill(whatsapp_account=diagnostic_account, direction="Incoming", limit=None)
+		self.assertEqual(int(result.get("scanned", 0)), 0)
+		self.assertIn("diagnostics", result)
+		diagnostics = result.get("diagnostics", {})
+		self.assertIn("total_whatsapp_messages", diagnostics)
+		self.assertIn("text_whatsapp_messages", diagnostics)
+		self.assertIn("by_content_type", diagnostics)
+		self.assertIn("by_account_all_messages", diagnostics)
+
 	def test_j_run_backfill_permission_denied_for_non_system_manager(self):
 		self._insert_whatsapp_incoming("j01", "permission denied")
 		current_user = frappe.session.user
@@ -298,6 +414,37 @@ class TestHistoricalBackfill(IntegrationTestCase):
 
 		self.assertEqual(result.get("status"), "queued")
 		self.assertEqual(result.get("job_id"), "job-warb4h-enqueue")
+
+	def test_k2_enqueue_sync_all_message_history_queues_full_history_job(self):
+		self._insert_whatsapp_incoming("k201", "enqueue full history")
+		original_enqueue = frappe.enqueue
+		captured = {}
+
+		class _Job:
+			id = "job-warb4h-full-history"
+
+		def fake_enqueue(*args, **kwargs):
+			captured.update(kwargs)
+			return _Job()
+
+		try:
+			release_backfill_lock(BACKFILL_LOCK_KEY)
+			frappe.enqueue = fake_enqueue
+			result = enqueue_sync_all_message_history()
+		finally:
+			frappe.enqueue = original_enqueue
+			release_backfill_lock(BACKFILL_LOCK_KEY)
+
+		self.assertEqual(result.get("status"), "queued_full_history")
+		self.assertEqual(result.get("job_id"), "job-warb4h-full-history")
+		self.assertIsNone(captured.get("whatsapp_account"))
+		self.assertIsNone(captured.get("phone_number"))
+		self.assertIsNone(captured.get("from_datetime"))
+		self.assertIsNone(captured.get("to_datetime"))
+		self.assertIsNone(captured.get("direction"))
+		self.assertIsNone(captured.get("limit"))
+		self.assertEqual(int(captured.get("dry_run") or 0), 0)
+		self.assertEqual(int(captured.get("scheduled") or 0), 0)
 
 	def test_l_scheduler_skips_when_disabled(self):
 		settings = frappe.get_single("WhatsApp Raven Bridge Settings")
@@ -529,7 +676,6 @@ class TestHistoricalBackfill(IntegrationTestCase):
 			"default_channel_type": settings.default_channel_type,
 			"bridge_raven_bot": settings.bridge_raven_bot,
 			"bridge_raven_user": settings.bridge_raven_user,
-			"default_whatsapp_account": settings.default_whatsapp_account,
 			"conversation_strategy": settings.conversation_strategy,
 			"enable_outbound_replies": settings.enable_outbound_replies,
 			"enable_scheduled_backfill": settings.enable_scheduled_backfill,
@@ -568,7 +714,6 @@ class TestHistoricalBackfill(IntegrationTestCase):
 		settings.default_channel_type = "Private"
 		settings.bridge_raven_bot = cls.BOT_NAME
 		settings.bridge_raven_user = bot.raven_user or cls.BOT_NAME
-		settings.default_whatsapp_account = cls.ACCOUNT_NAME
 		settings.conversation_strategy = "Thread Per Contact"
 		settings.enable_outbound_replies = 1
 		settings.enable_scheduled_backfill = 0

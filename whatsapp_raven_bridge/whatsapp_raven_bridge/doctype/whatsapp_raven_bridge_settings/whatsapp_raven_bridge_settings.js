@@ -9,19 +9,15 @@ frappe.ui.form.on("WhatsApp Raven Bridge Settings", {
 		});
 
 		frm.add_custom_button(__("Run Bootstrap Setup"), async () => {
-			await open_bootstrap_dialog(frm);
+			await run_bootstrap_setup(frm);
 		});
 
 		frm.add_custom_button(__("Preview Backfill"), async () => {
-			await open_backfill_preview_dialog();
+			await preview_backfill_all();
 		});
 
-		frm.add_custom_button(__("Run Backfill Now"), async () => {
-			await open_backfill_run_dialog(frm);
-		});
-
-		frm.add_custom_button(__("Run Scheduled Backfill Now"), async () => {
-			await run_scheduled_backfill_now(frm);
+		frm.add_custom_button(__("Sync All Message History Now"), async () => {
+			await sync_all_history_now(frm);
 		});
 	},
 });
@@ -70,93 +66,17 @@ async function show_setup_status() {
 	});
 }
 
-async function open_bootstrap_dialog(frm) {
-	const default_raven_user = await get_current_session_raven_user();
-	const status = await frappe.call({
-		method: "whatsapp_raven_bridge.api.setup.get_setup_status",
-	});
-	const has_whatsapp_account = !!status?.message?.has_whatsapp_account;
-
-	const dialog = new frappe.ui.Dialog({
-		title: __("Run Bootstrap Setup"),
-		fields: [
-			{
-				fieldname: "workspace_name",
-				label: __("Workspace Name"),
-				fieldtype: "Data",
-				default: "WhatsApp Inbox",
-				reqd: 1,
-			},
-			{
-				fieldname: "bridge_bot_name",
-				label: __("Bridge Bot Name"),
-				fieldtype: "Data",
-				default: "WhatsApp Bridge Bot",
-				reqd: 1,
-			},
-			{
-				fieldname: "whatsapp_account",
-				label: __("WhatsApp Account"),
-				fieldtype: "Link",
-				options: "WhatsApp Account",
-				reqd: has_whatsapp_account ? 1 : 0,
-				description: has_whatsapp_account
-					? ""
-					: __("No WhatsApp Account found yet. Create one in frappe_whatsapp first."),
-			},
-			{
-				fieldname: "primary_raven_user",
-				label: __("Primary Raven User"),
-				fieldtype: "Link",
-				options: "Raven User",
-				default: default_raven_user || "",
-				description: __("For multiple members, use CLI bootstrap with route_members list."),
-			},
-			{
-				fieldname: "conversation_strategy",
-				label: __("Conversation Strategy"),
-				fieldtype: "Select",
-				options: ["Thread Per Contact", "Channel Per Contact"],
-				default: "Thread Per Contact",
-				reqd: 1,
-			},
-			{
-				fieldname: "channel_type",
-				label: __("Channel Type"),
-				fieldtype: "Select",
-				options: ["Private", "Public", "Open"],
-				default: "Private",
-				reqd: 1,
-			},
-			{
-				fieldname: "enable_outbound_replies",
-				label: __("Enable Outbound Replies"),
-				fieldtype: "Check",
-				default: 1,
-			},
-		],
-		primary_action_label: __("Run Bootstrap"),
-		primary_action: async () => {
-			const values = dialog.get_values();
-			if (!values) return;
-
-			dialog.hide();
-			frappe.dom.freeze(__("Running bridge bootstrap..."));
-
-			try {
-				const response = await frappe.call({
-					method: "whatsapp_raven_bridge.api.setup.bootstrap_from_settings_dialog",
-					args: values,
-				});
-				await frm.reload_doc();
-				show_bootstrap_summary(response.message || {});
-			} finally {
-				frappe.dom.unfreeze();
-			}
-		},
-	});
-
-	dialog.show();
+async function run_bootstrap_setup(frm) {
+	frappe.dom.freeze(__("Running bootstrap setup for all WhatsApp accounts..."));
+	try {
+		const response = await frappe.call({
+			method: "whatsapp_raven_bridge.api.setup.bootstrap_all_accounts_from_settings",
+		});
+		await frm.reload_doc();
+		show_bootstrap_summary(response.message || {});
+	} finally {
+		frappe.dom.unfreeze();
+	}
 }
 
 function show_bootstrap_summary(summary) {
@@ -192,6 +112,9 @@ function show_bootstrap_summary(summary) {
 			<p><strong>${__("Bot")}:</strong> ${frappe.utils.escape_html(summary.bot || "")}</p>
 			<p><strong>${__("Bridge Raven User")}:</strong> ${frappe.utils.escape_html(summary.bridge_raven_user || "")}</p>
 			<p><strong>${__("Bridge System User")}:</strong> ${frappe.utils.escape_html(summary.bridge_system_user || "")}</p>
+			<p><strong>${__("Accounts Processed")}:</strong> ${frappe.utils.escape_html(
+				String(summary.account_count || routes.length || 0)
+			)}</p>
 			<h5>${__("Routes")}</h5>
 			${route_rows}
 			<h5>${__("Warnings")}</h5>
@@ -202,206 +125,195 @@ function show_bootstrap_summary(summary) {
 	});
 }
 
-async function get_current_session_raven_user() {
+async function preview_backfill_all() {
+	frappe.dom.freeze(__("Previewing all message history..."));
 	try {
-		const me = await frappe.call({
-			method: "frappe.client.get_value",
-			args: {
-				doctype: "Raven User",
-				filters: { user: frappe.session.user, enabled: 1 },
-				fieldname: "name",
-			},
+		const response = await frappe.call({
+			method: "whatsapp_raven_bridge.api.backfill.preview_all_message_history",
 		});
-		return me?.message?.name || "";
-	} catch (error) {
-		return "";
+		show_backfill_preview(response.message || {});
+	} finally {
+		frappe.dom.unfreeze();
 	}
+}
+
+function show_backfill_preview(summary) {
+	const byDirection = summary.by_direction || {};
+	const byAccount = summary.by_account || {};
+	const byPhone = summary.by_phone || {};
+	const sample = summary.sample || [];
+	const byAccountDetail = summary.by_account_detail || {};
+	const diagnostics = summary.diagnostics || {};
+	const accountOptions = ["All Accounts"].concat(Object.keys(byAccountDetail).sort());
+
+	const dialog = new frappe.ui.Dialog({
+		title: __("Backfill Preview"),
+		size: "extra-large",
+		fields: [
+			{
+				fieldname: "account_filter",
+				label: __("WhatsApp Account Filter"),
+				fieldtype: "Select",
+				options: accountOptions.join("\n"),
+				default: "All Accounts",
+				onchange: () => render_preview(),
+			},
+			{
+				fieldname: "preview_html",
+				fieldtype: "HTML",
+			},
+		],
+		primary_action_label: __("Close"),
+		primary_action: () => dialog.hide(),
+	});
+
+	const render_preview = () => {
+		const selected = dialog.get_value("account_filter") || "All Accounts";
+		const accountDetail = selected === "All Accounts" ? null : byAccountDetail[selected] || {};
+		const scopedDirection = selected === "All Accounts" ? byDirection : accountDetail.by_direction || {};
+		const scopedPhone = selected === "All Accounts" ? byPhone : accountDetail.by_phone || {};
+		const scopedSample = selected === "All Accounts" ? sample : accountDetail.sample || [];
+		const scopedRows =
+			selected === "All Accounts"
+				? [
+						["Scanned", String(summary.scanned || 0)],
+						["Eligible", String(summary.eligible || 0)],
+						["Skipped Existing", String(summary.skipped_existing || 0)],
+					]
+				: [
+						["Scanned", String(accountDetail.scanned || 0)],
+						["Eligible", String(accountDetail.eligible || 0)],
+						["Skipped Existing", String(accountDetail.skipped_existing || 0)],
+					];
+
+		const tableHtml = `
+			<table class="table table-bordered">
+				<tbody>
+					${scopedRows
+						.map(
+							([label, value]) =>
+								`<tr><td><strong>${frappe.utils.escape_html(label)}</strong></td><td>${frappe.utils.escape_html(value)}</td></tr>`
+						)
+						.join("")}
+				</tbody>
+			</table>
+		`;
+
+		const directionHtml = Object.keys(scopedDirection).length
+			? `<ul>${Object.entries(scopedDirection)
+					.map(([k, v]) => `<li>${frappe.utils.escape_html(k)}: ${frappe.utils.escape_html(String(v))}</li>`)
+					.join("")}</ul>`
+			: "<p>None</p>";
+		const accountHtml = Object.keys(byAccount).length
+			? `<ul>${Object.entries(byAccount)
+					.map(([k, v]) => `<li>${frappe.utils.escape_html(k)}: ${frappe.utils.escape_html(String(v))}</li>`)
+					.join("")}</ul>`
+			: "<p>None</p>";
+		const phoneHtml = Object.keys(scopedPhone).length
+			? `<ul>${Object.entries(scopedPhone)
+					.slice(0, 20)
+					.map(([k, v]) => `<li>${frappe.utils.escape_html(k)}: ${frappe.utils.escape_html(String(v))}</li>`)
+					.join("")}</ul>`
+			: "<p>None</p>";
+		const sampleHtml = scopedSample.length
+			? `<ul>${scopedSample
+					.slice(0, 30)
+					.map(
+						(row) =>
+							`<li>${frappe.utils.escape_html(row.whatsapp_account || "No Account")} / ${frappe.utils.escape_html(
+								row.phone || ""
+							)} / ${frappe.utils.escape_html(row.type || "")} / ${frappe.utils.escape_html(
+								row.original_datetime || ""
+							)}</li>`
+					)
+					.join("")}</ul>`
+			: "<p>None</p>";
+		const diagnosticsHtml =
+			intOrZero(summary.scanned) === 0
+				? `
+					<div class="alert alert-info">
+						<p><strong>${__("No local text WhatsApp Message records were found for preview.")}</strong></p>
+						<p>${__(
+							"This preview imports existing local WhatsApp Message records only and currently supports text messages."
+						)}</p>
+					</div>
+					<table class="table table-bordered">
+						<tbody>
+							<tr><td><strong>${__("Total WhatsApp Message Rows")}</strong></td><td>${frappe.utils.escape_html(String(diagnostics.total_whatsapp_messages || 0))}</td></tr>
+							<tr><td><strong>${__("Text WhatsApp Message Rows")}</strong></td><td>${frappe.utils.escape_html(String(diagnostics.text_whatsapp_messages || 0))}</td></tr>
+						</tbody>
+					</table>
+					<h5>${__("By Content Type")}</h5>
+					${
+						Object.keys(diagnostics.by_content_type || {}).length
+							? `<ul>${Object.entries(diagnostics.by_content_type || {})
+									.map(([k, v]) => `<li>${frappe.utils.escape_html(k)}: ${frappe.utils.escape_html(String(v))}</li>`)
+									.join("")}</ul>`
+							: "<p>None</p>"
+					}
+					<h5>${__("By Account (All Messages)")}</h5>
+					${
+						Object.keys(diagnostics.by_account_all_messages || {}).length
+							? `<ul>${Object.entries(diagnostics.by_account_all_messages || {})
+									.map(([k, v]) => `<li>${frappe.utils.escape_html(k)}: ${frappe.utils.escape_html(String(v))}</li>`)
+									.join("")}</ul>`
+							: "<p>None</p>"
+					}
+				`
+				: "";
+
+		dialog.fields_dict.preview_html.$wrapper.html(`
+			${tableHtml}
+			<h5>${__("By Direction")}</h5>
+			${directionHtml}
+			${
+				selected === "All Accounts"
+					? `<h5>${__("By Account")}</h5>${accountHtml}`
+					: `<h5>${__("Account")}</h5><p>${frappe.utils.escape_html(selected)}</p>`
+			}
+			<h5>${__("By Phone (Top 20)")}</h5>
+			${phoneHtml}
+			<h5>${__("Sample Rows")}</h5>
+			${sampleHtml}
+			${diagnosticsHtml}
+		`);
+	};
+
+	dialog.show();
+	render_preview();
+}
+
+async function sync_all_history_now(frm) {
+	frappe.confirm(
+		__(
+			"This will enqueue a full historical sync of local WhatsApp Message records for all accounts. It will not send WhatsApp messages."
+		),
+		async () => {
+			frappe.dom.freeze(__("Queueing full-history sync..."));
+			try {
+				const response = await frappe.call({
+					method: "whatsapp_raven_bridge.api.backfill.enqueue_sync_all_message_history",
+				});
+				const result = response.message || {};
+				await frm.reload_doc();
+				frappe.msgprint({
+					title: __("Backfill"),
+					message: result.job_id
+						? __("Full-history sync queued: {0}", [result.job_id])
+						: __("Sync request result: {0}", [result.status || "unknown"]),
+				});
+			} finally {
+				frappe.dom.unfreeze();
+			}
+		}
+	);
 }
 
 function bool_to_yes_no(value) {
 	return value ? "Yes" : "No";
 }
 
-function get_backfill_filter_fields() {
-	return [
-		{
-			fieldname: "whatsapp_account",
-			label: __("WhatsApp Account"),
-			fieldtype: "Link",
-			options: "WhatsApp Account",
-		},
-		{
-			fieldname: "phone_number",
-			label: __("Phone Number"),
-			fieldtype: "Data",
-		},
-		{
-			fieldname: "from_datetime",
-			label: __("From Datetime"),
-			fieldtype: "Datetime",
-		},
-		{
-			fieldname: "to_datetime",
-			label: __("To Datetime"),
-			fieldtype: "Datetime",
-		},
-		{
-			fieldname: "direction",
-			label: __("Direction"),
-			fieldtype: "Select",
-			options: ["Both", "Incoming", "Outgoing"],
-			default: "Both",
-		},
-		{
-			fieldname: "limit",
-			label: __("Limit"),
-			fieldtype: "Int",
-			default: 100,
-			reqd: 1,
-		},
-	];
-}
-
-async function open_backfill_preview_dialog() {
-	const dialog = new frappe.ui.Dialog({
-		title: __("Preview Backfill"),
-		fields: get_backfill_filter_fields(),
-		primary_action_label: __("Preview"),
-		primary_action: async () => {
-			const values = dialog.get_values();
-			if (!values) return;
-			dialog.hide();
-			frappe.dom.freeze(__("Previewing backfill candidates..."));
-			try {
-				const args = {
-					...values,
-					direction: values.direction === "Both" ? null : values.direction,
-				};
-				const response = await frappe.call({
-					method: "whatsapp_raven_bridge.api.backfill.preview_backfill",
-					args,
-				});
-				show_backfill_preview(response.message || {});
-			} finally {
-				frappe.dom.unfreeze();
-			}
-		},
-	});
-	dialog.show();
-}
-
-function show_backfill_preview(summary) {
-	const rows = [
-		["Scanned", String(summary.scanned || 0)],
-		["Eligible", String(summary.eligible || 0)],
-		["Skipped Existing", String(summary.skipped_existing || 0)],
-	];
-	const byDirection = summary.by_direction || {};
-	const byAccount = summary.by_account || {};
-	const byPhone = summary.by_phone || {};
-
-	const tableHtml = `
-		<table class="table table-bordered">
-			<tbody>
-				${rows
-					.map(
-						([label, value]) =>
-							`<tr><td><strong>${frappe.utils.escape_html(label)}</strong></td><td>${frappe.utils.escape_html(value)}</td></tr>`
-					)
-					.join("")}
-			</tbody>
-		</table>
-	`;
-
-	const directionHtml = Object.keys(byDirection).length
-		? `<ul>${Object.entries(byDirection)
-				.map(([k, v]) => `<li>${frappe.utils.escape_html(k)}: ${frappe.utils.escape_html(String(v))}</li>`)
-				.join("")}</ul>`
-		: "<p>None</p>";
-	const accountHtml = Object.keys(byAccount).length
-		? `<ul>${Object.entries(byAccount)
-				.map(([k, v]) => `<li>${frappe.utils.escape_html(k)}: ${frappe.utils.escape_html(String(v))}</li>`)
-				.join("")}</ul>`
-		: "<p>None</p>";
-	const phoneHtml = Object.keys(byPhone).length
-		? `<ul>${Object.entries(byPhone)
-				.slice(0, 20)
-				.map(([k, v]) => `<li>${frappe.utils.escape_html(k)}: ${frappe.utils.escape_html(String(v))}</li>`)
-				.join("")}</ul>`
-		: "<p>None</p>";
-
-	frappe.msgprint({
-		title: __("Backfill Preview"),
-		wide: true,
-		message: `
-			${tableHtml}
-			<h5>${__("By Direction")}</h5>
-			${directionHtml}
-			<h5>${__("By Account")}</h5>
-			${accountHtml}
-			<h5>${__("By Phone (Top 20)")}</h5>
-			${phoneHtml}
-		`,
-	});
-}
-
-async function open_backfill_run_dialog(frm) {
-	const dialog = new frappe.ui.Dialog({
-		title: __("Run Backfill Now"),
-		fields: get_backfill_filter_fields(),
-		primary_action_label: __("Queue Backfill"),
-		primary_action: async () => {
-			const values = dialog.get_values();
-			if (!values) return;
-			dialog.hide();
-			frappe.confirm(
-				__(
-					"This will create Raven messages for existing WhatsApp Message records. It will not send WhatsApp messages."
-				),
-				async () => {
-					frappe.dom.freeze(__("Queueing backfill job..."));
-					try {
-						const args = {
-							...values,
-							direction: values.direction === "Both" ? null : values.direction,
-						};
-						const response = await frappe.call({
-							method: "whatsapp_raven_bridge.api.backfill.enqueue_backfill",
-							args,
-						});
-						const result = response.message || {};
-						await frm.reload_doc();
-						frappe.msgprint({
-							title: __("Backfill"),
-							message: result.job_id
-								? __("Backfill job queued: {0}", [result.job_id])
-								: __("Backfill request result: {0}", [result.status || "unknown"]),
-						});
-					} finally {
-						frappe.dom.unfreeze();
-					}
-				}
-			);
-		},
-	});
-	dialog.show();
-}
-
-async function run_scheduled_backfill_now(frm) {
-	frappe.dom.freeze(__("Queueing scheduled backfill..."));
-	try {
-		const response = await frappe.call({
-			method: "whatsapp_raven_bridge.api.backfill.run_scheduled_backfill_now",
-		});
-		const result = response.message || {};
-		await frm.reload_doc();
-		frappe.msgprint({
-			title: __("Scheduled Backfill"),
-			message: result.job_id
-				? __("Scheduled backfill job queued: {0}", [result.job_id])
-				: __("Scheduled backfill result: {0}", [result.status || "unknown"]),
-		});
-	} finally {
-		frappe.dom.unfreeze();
-	}
+function intOrZero(value) {
+	const numeric = Number(value);
+	return Number.isFinite(numeric) ? numeric : 0;
 }
