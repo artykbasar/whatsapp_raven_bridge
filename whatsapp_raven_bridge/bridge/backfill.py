@@ -9,7 +9,7 @@ from typing import Any
 
 import frappe
 from frappe import _
-from frappe.utils import add_to_date, cstr, escape_html, get_datetime, now_datetime, strip_html_tags
+from frappe.utils import add_to_date, cint, cstr, get_datetime, now_datetime, strip_html_tags
 
 from whatsapp_raven_bridge.bridge.conversation import (
 	create_message_link,
@@ -19,6 +19,12 @@ from whatsapp_raven_bridge.bridge.conversation import (
 	normalize_phone_number,
 )
 from whatsapp_raven_bridge.bridge.raven_destination import ensure_raven_destination
+from whatsapp_raven_bridge.bridge.whatsapp_message_rendering import (
+	build_whatsapp_origin_message_content,
+	build_whatsapp_origin_message_html,
+	incoming_header_label,
+	outgoing_import_header_label,
+)
 from whatsapp_raven_bridge.utils.settings import get_settings
 
 BACKFILL_LOCK_KEY = "whatsapp_raven_bridge:historical_backfill_lock"
@@ -321,11 +327,14 @@ def process_backfill_whatsapp_message(
 				"channel_id": raven_channel.name,
 				"message_type": "Text",
 				"text": build_backfill_raven_text(doc, phone_normalized, body_text),
+				"content": build_whatsapp_origin_message_content(
+					_get_backfill_header_label(doc, phone_normalized),
+					body_text,
+				),
 				"json": metadata,
 				"is_bot_message": 1,
 				"bot": settings.get("bridge_raven_user"),
-				"link_doctype": "WhatsApp Message",
-				"link_document": doc.name,
+				"hide_link_preview": 1,
 			}
 		).insert(ignore_permissions=True)
 	finally:
@@ -472,13 +481,17 @@ def refresh_thread_last_message_state(channel_id: str) -> None:
 
 def build_backfill_raven_text(doc, normalized_phone: str, body_text: str) -> str:
 	"""Build safe Raven HTML text for imported historical WhatsApp message."""
-	is_incoming = cstr(doc.get("type")) == "Incoming"
-	label = "WhatsApp from" if is_incoming else "WhatsApp outgoing"
-	sender = cstr(doc.get("profile_name") or "").strip() if is_incoming else ""
-	sender = sender or ("Customer" if is_incoming else "Agent")
-	header = f"<p><strong>{escape_html(label)} {escape_html(sender)}</strong> <code>{escape_html(normalized_phone)}</code></p>"
-	body_html = f"<p>{escape_html(body_text).replace(chr(10), '<br>')}</p>"
-	return f"{header}{body_html}"
+	return build_whatsapp_origin_message_html(
+		whatsapp_message_name=doc.name,
+		header_label=_get_backfill_header_label(doc, normalized_phone),
+		body_text=body_text,
+	)
+
+
+def _get_backfill_header_label(doc, normalized_phone: str) -> str:
+	if cstr(doc.get("type")) == "Incoming":
+		return incoming_header_label(doc.get("profile_name"), normalized_phone)
+	return outgoing_import_header_label()
 
 
 def _extract_whatsapp_body_text(doc) -> str:
@@ -692,6 +705,157 @@ def _build_preview_diagnostics() -> dict[str, Any]:
 		"by_content_type": by_content_type,
 		"by_account_all_messages": by_account_all_messages,
 	}
+
+
+def reformat_existing_whatsapp_origin_raven_messages() -> frappe._dict:
+	"""Rewrite old bridge-created WhatsApp-origin Raven messages into compact clickable format."""
+	summary = frappe._dict(
+		{
+			"scanned_links": 0,
+			"reformatted": 0,
+			"skipped_human_reply": 0,
+			"skipped_missing_raven_message": 0,
+			"skipped_missing_whatsapp_message": 0,
+			"skipped_unrelated": 0,
+			"errors": [],
+		}
+	)
+	touched_channels = set()
+	links = frappe.get_all(
+		"WhatsApp Raven Message Link",
+		filters=[
+			["raven_message", "is", "set"],
+			["whatsapp_message", "is", "set"],
+		],
+		fields=["name", "direction", "is_backfilled", "raven_message", "whatsapp_message", "metadata"],
+	)
+	summary.scanned_links = len(links)
+	message_meta = frappe.get_meta("Raven Message")
+
+	for link in links:
+		try:
+			raven_name = cstr(link.get("raven_message") or "").strip()
+			whatsapp_name = cstr(link.get("whatsapp_message") or "").strip()
+			if not raven_name or not frappe.db.exists("Raven Message", raven_name):
+				summary.skipped_missing_raven_message += 1
+				continue
+			if not whatsapp_name or not frappe.db.exists("WhatsApp Message", whatsapp_name):
+				summary.skipped_missing_whatsapp_message += 1
+				continue
+
+			raven_message = frappe.get_doc("Raven Message", raven_name)
+			whatsapp_message = frappe.get_doc("WhatsApp Message", whatsapp_name)
+
+			if not _is_rewritable_whatsapp_origin_row(link, raven_message):
+				if _looks_like_human_reply(link, raven_message):
+					summary.skipped_human_reply += 1
+				else:
+					summary.skipped_unrelated += 1
+				continue
+
+			normalized_phone = normalize_phone_number(whatsapp_message.get("from") or whatsapp_message.get("to"))
+			body_text = _extract_whatsapp_body_text(whatsapp_message)
+			header_label = _get_backfill_header_label(whatsapp_message, normalized_phone)
+			new_text = build_whatsapp_origin_message_html(
+				whatsapp_message_name=whatsapp_message.name,
+				header_label=header_label,
+				body_text=body_text,
+			)
+			new_content = build_whatsapp_origin_message_content(header_label, body_text)
+			if _already_compact_whatsapp_origin_message(raven_message, new_text, new_content):
+				summary.skipped_unrelated += 1
+				continue
+
+			updates: dict[str, Any] = {
+				"text": new_text,
+				"hide_link_preview": 1,
+				"link_doctype": None,
+				"link_document": None,
+			}
+			if message_meta.has_field("content"):
+				updates["content"] = new_content
+
+			frappe.db.set_value("Raven Message", raven_message.name, updates, update_modified=False)
+			frappe.clear_document_cache("Raven Message", raven_message.name)
+			if raven_message.channel_id:
+				touched_channels.add(raven_message.channel_id)
+			summary.reformatted += 1
+		except Exception:
+			summary.errors.append(
+				{
+					"link": cstr(link.get("name") or "").strip(),
+					"raven_message": cstr(link.get("raven_message") or "").strip(),
+					"whatsapp_message": cstr(link.get("whatsapp_message") or "").strip(),
+					"error": frappe.get_traceback(),
+				}
+			)
+
+	for channel_id in sorted(touched_channels):
+		refresh_thread_last_message_state(channel_id)
+
+	return summary
+
+
+def _is_rewritable_whatsapp_origin_row(link, raven_message) -> bool:
+	if cstr(raven_message.get("link_doctype") or "").strip() == "WhatsApp Raven Conversation":
+		return False
+
+	link_direction = cstr(link.get("direction") or "").strip()
+	raven_metadata = _as_dict(raven_message.get("json"))
+	link_metadata = _as_dict(link.get("metadata"))
+	is_backfilled = cint(link.get("is_backfilled"))
+	is_bot = cint(raven_message.get("is_bot_message"))
+
+	if link_direction == "Incoming":
+		return bool(is_bot or _metadata_indicates_whatsapp_origin(raven_metadata) or _metadata_indicates_whatsapp_origin(link_metadata))
+
+	if link_direction == "Outgoing":
+		if is_backfilled:
+			return not _looks_like_human_reply(link, raven_message)
+		if _metadata_indicates_whatsapp_origin(raven_metadata) or _metadata_indicates_whatsapp_origin(link_metadata):
+			return not _looks_like_human_reply(link, raven_message)
+		return False
+
+	return False
+
+
+def _looks_like_human_reply(link, raven_message) -> bool:
+	if cint(link.get("is_backfilled")):
+		return False
+	if cint(raven_message.get("is_bot_message")):
+		return False
+	link_direction = cstr(link.get("direction") or "").strip()
+	raven_metadata = _as_dict(raven_message.get("json"))
+	link_metadata = _as_dict(link.get("metadata"))
+	if link_direction == "Outgoing" and not _metadata_indicates_whatsapp_origin(raven_metadata) and not _metadata_indicates_whatsapp_origin(link_metadata):
+		return True
+	return False
+
+
+def _metadata_indicates_whatsapp_origin(metadata: dict[str, Any] | None) -> bool:
+	meta = metadata or {}
+	source = cstr(meta.get("source") or "").strip().lower()
+	direction = cstr(meta.get("direction") or "").strip().lower()
+	purpose = cstr(meta.get("purpose") or "").strip().lower()
+	if source in {"whatsapp", "whatsapp_backfill", "whatsapp_raven_bridge"}:
+		return True
+	if direction in {"incoming", "outgoing_import"}:
+		return True
+	if purpose in {"thread_parent", "backfill_import"}:
+		return True
+	if meta.get("imported_from_whatsapp_message"):
+		return True
+	return False
+
+
+def _already_compact_whatsapp_origin_message(raven_message, expected_text: str, expected_content: str) -> bool:
+	return (
+		cstr(raven_message.get("text") or "") == cstr(expected_text)
+		and cstr(raven_message.get("content") or "") == cstr(expected_content)
+		and cint(raven_message.get("hide_link_preview") or 0) == 1
+		and not cstr(raven_message.get("link_doctype") or "").strip()
+		and not cstr(raven_message.get("link_document") or "").strip()
+	)
 
 
 def _update_conversation_backfill_state(conversation, source_doc, raven_message, original_datetime):

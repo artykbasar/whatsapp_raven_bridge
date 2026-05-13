@@ -18,6 +18,8 @@ Current behavior is text-only two-way sync.
    - account-routed inbox/thread when route is configured
    - channel-per-contact fallback otherwise
 4. Bridge creates one Raven **Text** message.
+   - Message header is a clickable link to `/app/whatsapp-message/<name>`.
+   - Individual mirrored chat lines do not render as large WhatsApp document cards.
 5. Bridge creates one **WhatsApp Raven Message Link** for idempotency.
 
 ## Outbound Flow
@@ -41,6 +43,7 @@ Behavior:
 4. Insert Raven message, then set `Raven Message.creation/modified` to source WhatsApp/Frappe timestamp.
 5. Create **WhatsApp Raven Message Link** with `is_backfilled=1` and source timestamp fields.
 6. Never send to WhatsApp during backfill.
+7. Backfilled/incoming WhatsApp-origin Raven messages are rendered in compact clickable-header format.
 
 CLI examples:
 
@@ -55,6 +58,8 @@ Desk actions (Settings):
 
 - **Preview Backfill**: dry-run preview for all accounts/all time/both directions (no writes)
 - **Sync All Message History Now**: queues full-history import for all accounts/all time/both directions
+
+Existing bridge-created WhatsApp-origin Raven messages are retrofitted to the compact format by migration/repair logic.
 
 Scheduled reconciliation:
 

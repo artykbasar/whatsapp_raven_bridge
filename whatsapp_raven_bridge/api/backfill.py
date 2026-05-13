@@ -12,6 +12,7 @@ from whatsapp_raven_bridge.bridge.backfill import (
 	backfill_whatsapp_messages,
 	enqueue_scheduled_backfill,
 	preview_missed_whatsapp_messages,
+	reformat_existing_whatsapp_origin_raven_messages as reformat_existing_whatsapp_origin_raven_messages_internal,
 	release_backfill_lock,
 	run_scheduled_backfill_now as run_scheduled_backfill_now_internal,
 )
@@ -168,3 +169,10 @@ def enqueue_sync_all_message_history() -> dict[str, Any]:
 	if result.get("status") == "queued":
 		result["status"] = "queued_full_history"
 	return dict(result)
+
+
+@frappe.whitelist()
+def reformat_existing_whatsapp_origin_raven_messages() -> dict[str, Any]:
+	"""Repair older bridge-created WhatsApp-origin Raven messages to the compact chat format."""
+	_require_backfill_permission()
+	return dict(reformat_existing_whatsapp_origin_raven_messages_internal())
