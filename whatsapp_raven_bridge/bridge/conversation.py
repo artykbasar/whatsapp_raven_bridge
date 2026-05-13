@@ -125,6 +125,12 @@ def create_message_link(
 	sync_status="Synced",
 	error=None,
 	metadata=None,
+	source_creation=None,
+	source_modified=None,
+	whatsapp_timestamp=None,
+	original_message_datetime=None,
+	imported_at=None,
+	is_backfilled=0,
 ):
 	"""Create and return a WhatsApp/Raven message link."""
 	link = frappe.get_doc(
@@ -140,6 +146,12 @@ def create_message_link(
 			"sync_status": sync_status,
 			"error": error,
 			"metadata": metadata,
+			"source_creation": source_creation,
+			"source_modified": source_modified,
+			"whatsapp_timestamp": whatsapp_timestamp,
+			"original_message_datetime": original_message_datetime,
+			"imported_at": imported_at,
+			"is_backfilled": is_backfilled,
 		}
 	)
 	link.insert(ignore_permissions=True)
