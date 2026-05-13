@@ -9,9 +9,12 @@ from frappe.utils import cstr, get_datetime, now_datetime
 from frappe.utils.password import set_encrypted_password
 
 import whatsapp_raven_bridge.api.backfill as backfill_api
+import whatsapp_raven_bridge.bridge.backfill as backfill_module
 from whatsapp_raven_bridge.api.backfill import enqueue_backfill, preview_backfill, run_backfill
 from whatsapp_raven_bridge.bridge.backfill import (
 	BACKFILL_LOCK_KEY,
+	_run_backfill_job,
+	_update_scheduled_backfill_state,
 	backfill_whatsapp_messages,
 	release_backfill_lock,
 	run_scheduled_backfill_if_due,
@@ -421,6 +424,100 @@ class TestHistoricalBackfill(IntegrationTestCase):
 		finally:
 			frappe.enqueue = original_enqueue
 		self.assertIsNone(frappe.cache().get_value(BACKFILL_LOCK_KEY, shared=True))
+
+	def test_s_update_scheduled_state_is_atomic_without_settings_save(self):
+		settings = frappe.get_single("WhatsApp Raven Bridge Settings")
+		settings.last_scheduled_backfill_status = "stale"
+		settings.save(ignore_permissions=True)
+		# simulate concurrent change after this doc snapshot
+		frappe.db.set_single_value(
+			"WhatsApp Raven Bridge Settings",
+			"last_scheduled_backfill_status",
+			"concurrent-change",
+		)
+
+		_update_scheduled_backfill_state(
+			status="completed",
+			summary={"scanned": 0, "imported": 0},
+			job_id="job-atomic-1",
+		)
+
+		settings.reload()
+		self.assertEqual(cstr(settings.last_scheduled_backfill_status), "completed")
+		self.assertEqual(cstr(settings.last_backfill_job_id), "job-atomic-1")
+		summary = json.loads(cstr(settings.last_scheduled_backfill_summary or "{}"))
+		self.assertEqual(int(summary.get("scanned", -1)), 0)
+
+	def test_t_run_backfill_job_success_not_failed_by_status_update_error(self):
+		original_update_state = backfill_module._update_scheduled_backfill_state
+
+		def fail_update_state(*, status, summary=None, job_id=None):
+			raise RuntimeError("forced status update failure")
+
+		try:
+			backfill_module._update_scheduled_backfill_state = fail_update_state
+			result = _run_backfill_job(scheduled=1, dry_run=0, limit=1, lock_key=None)
+		finally:
+			backfill_module._update_scheduled_backfill_state = original_update_state
+
+		self.assertIsInstance(result, dict)
+		self.assertIn("scanned", result)
+
+	def test_u_run_backfill_job_failure_releases_lock_and_raises_original_error(self):
+		original_backfill = backfill_module.backfill_whatsapp_messages
+		original_update_state = backfill_module._update_scheduled_backfill_state
+
+		def fail_backfill(*args, **kwargs):
+			raise RuntimeError("forced backfill failure")
+
+		def fail_update_state(*, status, summary=None, job_id=None):
+			raise RuntimeError("forced status update failure")
+
+		try:
+			release_backfill_lock(BACKFILL_LOCK_KEY)
+			lock = backfill_module.acquire_backfill_lock(BACKFILL_LOCK_KEY)
+			self.assertTrue(lock.get("acquired"))
+			backfill_module.backfill_whatsapp_messages = fail_backfill
+			backfill_module._update_scheduled_backfill_state = fail_update_state
+			with self.assertRaisesRegex(RuntimeError, "forced backfill failure"):
+				_run_backfill_job(scheduled=1, dry_run=0, limit=1, lock_key=BACKFILL_LOCK_KEY)
+		finally:
+			backfill_module.backfill_whatsapp_messages = original_backfill
+			backfill_module._update_scheduled_backfill_state = original_update_state
+			release_backfill_lock(BACKFILL_LOCK_KEY)
+
+		self.assertIsNone(frappe.cache().get_value(BACKFILL_LOCK_KEY, shared=True))
+
+	def test_v_scheduled_state_updated_via_single_values_on_queued_paths(self):
+		settings = frappe.get_single("WhatsApp Raven Bridge Settings")
+		settings.enable_scheduled_backfill = 1
+		settings.scheduled_backfill_interval = "Every 5 Minutes"
+		settings.scheduled_backfill_lookback_hours = 1
+		settings.scheduled_backfill_limit = 10
+		settings.scheduled_backfill_direction = "Incoming"
+		settings.last_scheduled_backfill_at = datetime(2026, 1, 1, 0, 0, 0)
+		settings.save(ignore_permissions=True)
+
+		original_enqueue = frappe.enqueue
+
+		class _Job:
+			id = "job-state-single-values"
+
+		def fake_enqueue(*args, **kwargs):
+			return _Job()
+
+		try:
+			release_backfill_lock(BACKFILL_LOCK_KEY)
+			frappe.enqueue = fake_enqueue
+			result = run_scheduled_backfill_if_due()
+		finally:
+			frappe.enqueue = original_enqueue
+			release_backfill_lock(BACKFILL_LOCK_KEY)
+
+		self.assertEqual(result.get("status"), "queued")
+		settings.reload()
+		self.assertEqual(cstr(settings.last_scheduled_backfill_status), "queued")
+		self.assertEqual(cstr(settings.last_backfill_job_id), "job-state-single-values")
 
 	@classmethod
 	def _snapshot_settings(cls):

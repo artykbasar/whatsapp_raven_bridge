@@ -741,7 +741,7 @@ def run_scheduled_backfill_if_due() -> frappe._dict:
 	)
 
 	if queued.get("status") == "queued":
-		_update_scheduled_backfill_state(
+		_safe_update_scheduled_backfill_state(
 			status="queued",
 			job_id=queued.get("job_id"),
 			summary={
@@ -756,7 +756,7 @@ def run_scheduled_backfill_if_due() -> frappe._dict:
 		return queued
 
 	if queued.get("status") == "skipped_locked":
-		_update_scheduled_backfill_state(status="skipped_locked", summary=queued)
+		_safe_update_scheduled_backfill_state(status="skipped_locked", summary=queued)
 	return queued
 
 
@@ -778,7 +778,7 @@ def run_scheduled_backfill_now() -> frappe._dict:
 		scheduled=1,
 	)
 	if queued.get("status") == "queued":
-		_update_scheduled_backfill_state(
+		_safe_update_scheduled_backfill_state(
 			status="queued_manual",
 			job_id=queued.get("job_id"),
 			summary={
@@ -847,29 +847,54 @@ def _run_backfill_job(
 			scheduled=scheduled,
 			lock_key=lock_key,
 		)
-		if int(scheduled or 0):
-			_update_scheduled_backfill_state(status="completed", summary=result)
-		return result
 	except Exception:
 		if int(scheduled or 0):
-			_update_scheduled_backfill_state(status="failed", summary={"traceback": frappe.get_traceback()})
+			_safe_update_scheduled_backfill_state(status="failed", summary={"traceback": frappe.get_traceback()})
 		if lock_key:
 			release_backfill_lock(lock_key)
 		raise
 
+	if int(scheduled or 0):
+		_safe_update_scheduled_backfill_state(status="completed", summary=result)
+	return result
+
+
+def _safe_update_scheduled_backfill_state(*, status: str, summary: Any = None, job_id: str | None = None) -> None:
+	"""Best-effort wrapper for scheduled backfill status updates."""
+	try:
+		_update_scheduled_backfill_state(status=status, summary=summary, job_id=job_id)
+	except Exception:
+		frappe.log_error(
+			title="WhatsApp Raven Bridge: failed to update scheduled backfill state",
+			message=frappe.get_traceback(),
+		)
+
 
 def _update_scheduled_backfill_state(*, status: str, summary: Any = None, job_id: str | None = None) -> None:
-	settings = get_settings()
-	if not settings:
-		return
-	settings.last_scheduled_backfill_at = now_datetime()
-	settings.last_scheduled_backfill_status = status
-	settings.last_scheduled_backfill_summary = (
+	summary_text = (
 		json.dumps(summary, default=str, indent=2) if isinstance(summary, (dict, list, frappe._dict)) else cstr(summary)
 	)
+	frappe.db.set_single_value(
+		"WhatsApp Raven Bridge Settings",
+		"last_scheduled_backfill_at",
+		now_datetime(),
+	)
+	frappe.db.set_single_value(
+		"WhatsApp Raven Bridge Settings",
+		"last_scheduled_backfill_status",
+		cstr(status),
+	)
+	frappe.db.set_single_value(
+		"WhatsApp Raven Bridge Settings",
+		"last_scheduled_backfill_summary",
+		summary_text,
+	)
 	if job_id:
-		settings.last_backfill_job_id = job_id
-	settings.save(ignore_permissions=True)
+		frappe.db.set_single_value(
+			"WhatsApp Raven Bridge Settings",
+			"last_backfill_job_id",
+			cstr(job_id),
+		)
 
 
 def _direction_for_backfill_query(direction: str | None) -> str | None:
