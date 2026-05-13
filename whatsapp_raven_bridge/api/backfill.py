@@ -30,7 +30,7 @@ def preview_backfill(
 	from_datetime: str | None = None,
 	to_datetime: str | None = None,
 	direction: str | None = None,
-	limit: int = 500,
+	limit: int | None = 500,
 ) -> dict[str, Any]:
 	"""Dry-run preview of WhatsApp historical backfill candidates."""
 	_require_backfill_permission()
@@ -54,7 +54,7 @@ def run_backfill(
 	from_datetime: str | None = None,
 	to_datetime: str | None = None,
 	direction: str | None = None,
-	limit: int = 500,
+	limit: int | None = 500,
 ) -> dict[str, Any]:
 	"""Execute historical backfill synchronously."""
 	_require_backfill_permission()
@@ -90,7 +90,7 @@ def enqueue_backfill(
 	from_datetime: str | None = None,
 	to_datetime: str | None = None,
 	direction: str | None = None,
-	limit: int = 500,
+	limit: int | None = 500,
 ) -> dict[str, Any]:
 	"""Queue asynchronous historical backfill."""
 	_require_backfill_permission()
@@ -132,3 +132,39 @@ def preview_missed_messages(
 			whatsapp_account=whatsapp_account,
 		)
 	)
+
+
+@frappe.whitelist()
+def preview_all_message_history() -> dict[str, Any]:
+	"""Dry-run preview for all local WhatsApp Message history (all accounts, both directions, no limit)."""
+	_require_backfill_permission()
+	return dict(
+		backfill_whatsapp_messages(
+			whatsapp_account=None,
+			phone_number=None,
+			from_datetime=None,
+			to_datetime=None,
+			direction=None,
+			limit=None,
+			dry_run=1,
+		)
+	)
+
+
+@frappe.whitelist()
+def enqueue_sync_all_message_history() -> dict[str, Any]:
+	"""Queue full-history sync for all local WhatsApp Message records."""
+	_require_backfill_permission()
+	result = enqueue_scheduled_backfill(
+		whatsapp_account=None,
+		phone_number=None,
+		from_datetime=None,
+		to_datetime=None,
+		direction=None,
+		limit=None,
+		preserve_raven_timestamps=1,
+		scheduled=0,
+	)
+	if result.get("status") == "queued":
+		result["status"] = "queued_full_history"
+	return dict(result)

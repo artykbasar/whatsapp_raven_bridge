@@ -6,8 +6,10 @@ from frappe.tests import IntegrationTestCase
 from frappe.utils import cstr
 from frappe.utils.password import set_encrypted_password
 
+import whatsapp_raven_bridge.api.setup as setup_api
 from whatsapp_raven_bridge.api.setup import (
 	DEFAULT_BRIDGE_SYSTEM_USER_EMAIL,
+	bootstrap_all_accounts_from_settings,
 	bootstrap_from_settings_dialog,
 	bootstrap_whatsapp_raven_bridge,
 	ensure_default_bridge_system_user,
@@ -365,8 +367,79 @@ class TestSetupBootstrapAndServiceUser(IntegrationTestCase):
 		self.assertIn("Check Setup Status", js)
 		self.assertIn("Run Bootstrap Setup", js)
 		self.assertIn("Preview Backfill", js)
-		self.assertIn("Run Backfill Now", js)
+		self.assertIn("Sync All Message History Now", js)
+		self.assertNotIn("Run Backfill Now", js)
+		self.assertNotIn("Run Scheduled Backfill Now", js)
 		self.assertNotIn("fieldname: \"bridge_system_user\"", js)
+
+	def test_bootstrap_all_accounts_from_settings_uses_expected_defaults(self):
+		suffix = frappe.generate_hash(length=6).lower()
+		account_one = f"{self.PREFIX} ALL A {suffix}"
+		account_two = f"{self.PREFIX} ALL B {suffix}"
+		for account_name in (account_one, account_two):
+			if not frappe.db.exists("WhatsApp Account", account_name):
+				account = frappe.new_doc("WhatsApp Account")
+				account.name = account_name
+				account.account_name = account_name
+				account.business_account_id = f"wabid-{suffix}-{frappe.generate_hash(length=4).lower()}"
+				account.phone_no_id = f"phoneid-{suffix}-{frappe.generate_hash(length=4).lower()}"
+				account.meta_template_namespace = f"ns-{suffix}-{frappe.generate_hash(length=4).lower()}"
+				account.username = f"{suffix}{frappe.generate_hash(length=4).lower()}@example.com"
+				account.password = "x"
+				account.insert(ignore_permissions=True)
+				set_encrypted_password("WhatsApp Account", account.name, "password", "dummy-token")
+
+		settings = frappe.get_single("WhatsApp Raven Bridge Settings")
+		settings.default_raven_workspace = ""
+		settings.bridge_raven_bot = ""
+		settings.conversation_strategy = ""
+		settings.enable_outbound_replies = 0
+		settings.save(ignore_permissions=True)
+		frappe.db.commit()
+
+		target_accounts = [self.ACCOUNT_NAME, account_one, account_two]
+		expected_workspace = "Raven" if frappe.db.exists("Raven Workspace", "Raven") else "WhatsApp Inbox"
+		original_get_all_accounts = setup_api._get_all_whatsapp_accounts
+		setup_api._get_all_whatsapp_accounts = lambda: list(target_accounts)
+		try:
+			result = bootstrap_all_accounts_from_settings()
+			self.assertTrue(result.get("settings_updated"))
+			self.assertEqual(result.get("workspace"), expected_workspace)
+			self.assertEqual(result.get("bot"), "WhatsApp Bridge Bot")
+			self.assertEqual(int(result.get("account_count") or 0), len(target_accounts))
+			self.assertGreaterEqual(len(result.get("routes") or []), len(target_accounts))
+
+			settings.reload()
+			self.assertEqual(cstr(settings.default_raven_workspace), expected_workspace)
+			self.assertEqual(cstr(settings.bridge_raven_bot), "WhatsApp Bridge Bot")
+			self.assertEqual(cstr(settings.default_channel_type), "Private")
+			self.assertEqual(cstr(settings.conversation_strategy), "Thread Per Contact")
+			self.assertEqual(int(settings.enable_outbound_replies), 1)
+
+			for account_name in target_accounts:
+				route_name = frappe.db.get_value(
+					"WhatsApp Raven Account Route",
+					{"whatsapp_account": account_name, "enabled": 1},
+					"name",
+				)
+				self.assertTrue(route_name)
+				route = frappe.get_doc("WhatsApp Raven Account Route", route_name)
+				self.assertEqual(cstr(route.channel_type), "Private")
+				self.assertEqual(cstr(route.conversation_strategy), "Thread Per Contact")
+				member = next((row for row in (route.members or []) if row.raven_user == "Administrator"), None)
+				self.assertTrue(member)
+				self.assertEqual(int(member.can_reply), 1)
+				self.assertEqual(int(member.is_admin), 1)
+
+			second = bootstrap_all_accounts_from_settings()
+			self.assertTrue(second.get("settings_updated"))
+			for account_name in target_accounts:
+				self.assertEqual(
+					frappe.db.count("WhatsApp Raven Account Route", {"whatsapp_account": account_name, "enabled": 1}),
+					1,
+				)
+		finally:
+			setup_api._get_all_whatsapp_accounts = original_get_all_accounts
 
 	def test_bootstrap_from_settings_dialog_without_bridge_system_user_uses_default_path(self):
 		self._force_set_bridge_system_user(None)

@@ -37,14 +37,14 @@ def backfill_whatsapp_messages(
 	from_datetime: str | datetime | None = None,
 	to_datetime: str | datetime | None = None,
 	direction: str | None = None,
-	limit: int = 500,
+	limit: int | None = 500,
 	dry_run: int = 1,
 	preserve_raven_timestamps: int = 1,
 	scheduled: int = 0,
 	lock_key: str | None = None,
 ) -> frappe._dict:
 	"""Preview or run backfill of historical WhatsApp Message rows."""
-	limit = max(1, min(int(limit or 500), 5000))
+	limit = _normalize_backfill_limit(limit)
 	dry_run = 1 if int(dry_run or 0) else 0
 	preserve_raven_timestamps = 1 if int(preserve_raven_timestamps or 0) else 0
 	scheduled = 1 if int(scheduled or 0) else 0
@@ -155,10 +155,10 @@ def get_backfill_candidates(
 	from_datetime: str | datetime | None = None,
 	to_datetime: str | datetime | None = None,
 	direction: str | None = None,
-	limit: int = 500,
+	limit: int | None = 500,
 ) -> list[frappe._dict]:
 	"""Return WhatsApp Message docs eligible for historical text backfill."""
-	limit = max(1, min(int(limit or 500), 5000))
+	limit = _normalize_backfill_limit(limit)
 	normalized_phone = normalize_phone_number(phone_number) if phone_number else ""
 	from_dt = get_datetime(from_datetime) if from_datetime else None
 	to_dt = get_datetime(to_datetime) if to_datetime else None
@@ -174,7 +174,8 @@ def get_backfill_candidates(
 	if to_dt:
 		filters.append(["creation", "<=", to_dt])
 
-	fetch_limit = limit if not normalized_phone else max(limit * 5, 1000)
+	base_limit = limit if limit is not None else 0
+	fetch_limit = (base_limit if not normalized_phone else max(base_limit * 5, 1000)) if base_limit else None
 	rows = frappe.get_all(
 		"WhatsApp Message",
 		filters=filters,
@@ -211,7 +212,7 @@ def get_backfill_candidates(
 			cstr(x.doc.name),
 		)
 	)
-	return candidates[:limit]
+	return candidates if limit is None else candidates[:limit]
 
 
 def process_backfill_whatsapp_message(
@@ -671,7 +672,7 @@ def enqueue_scheduled_backfill(
 	from_datetime=None,
 	to_datetime=None,
 	direction: str | None = None,
-	limit: int = 200,
+	limit: int | None = 200,
 	preserve_raven_timestamps: int = 1,
 	scheduled: int = 1,
 ) -> frappe._dict:
@@ -827,7 +828,7 @@ def _run_backfill_job(
 	from_datetime=None,
 	to_datetime=None,
 	direction: str | None = None,
-	limit: int = 200,
+	limit: int | None = 200,
 	dry_run: int = 0,
 	preserve_raven_timestamps: int = 1,
 	scheduled: int = 1,
@@ -902,3 +903,15 @@ def _direction_for_backfill_query(direction: str | None) -> str | None:
 	if value in {"", "Both"}:
 		return None
 	return value
+
+
+def _normalize_backfill_limit(limit: int | None) -> int | None:
+	if limit is None:
+		return None
+	text = cstr(limit).strip()
+	if not text:
+		return None
+	value = int(text)
+	if value <= 0:
+		return None
+	return min(value, 5000)

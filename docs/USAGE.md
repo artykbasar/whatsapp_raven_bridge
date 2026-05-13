@@ -8,6 +8,8 @@ Current behavior is text-only two-way sync.
 - CLI: `bootstrap_whatsapp_raven_bridge`
 - Manual: configure settings/routes directly
 
+`Run Bootstrap Setup` in Desk now runs immediately (no dialog) and applies defaults for all available WhatsApp Accounts.
+
 ## Inbound Flow
 
 1. Customer sends WhatsApp text message.
@@ -43,16 +45,16 @@ Behavior:
 CLI examples:
 
 ```bash
+bench --site SITE execute whatsapp_raven_bridge.api.backfill.preview_all_message_history
+bench --site SITE execute whatsapp_raven_bridge.api.backfill.enqueue_sync_all_message_history
 bench --site SITE execute whatsapp_raven_bridge.api.backfill.preview_backfill --kwargs '{"whatsapp_account":"ACCOUNT","limit":100}'
 bench --site SITE execute whatsapp_raven_bridge.api.backfill.run_backfill --kwargs '{"whatsapp_account":"ACCOUNT","limit":100}'
-bench --site SITE execute whatsapp_raven_bridge.api.backfill.run_scheduled_backfill_now
 ```
 
 Desk actions (Settings):
 
-- **Preview Backfill**: dry-run summary only
-- **Run Backfill Now**: queues import job after confirmation
-- **Run Scheduled Backfill Now**: triggers scheduled policy immediately
+- **Preview Backfill**: dry-run preview for all accounts/all time/both directions (no writes)
+- **Sync All Message History Now**: queues full-history import for all accounts/all time/both directions
 
 Scheduled reconciliation:
 

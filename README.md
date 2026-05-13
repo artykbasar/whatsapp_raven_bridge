@@ -51,6 +51,8 @@ Go to **WhatsApp Raven Bridge Settings** and use:
 
 - **Check Setup Status**
 - **Run Bootstrap Setup**
+- **Preview Backfill**
+- **Sync All Message History Now**
 
 `bridge_system_user` is optional. If left blank, saving settings auto-creates and assigns
 `whatsapp.bridge@example.com`.
@@ -95,7 +97,7 @@ Bootstrap does not configure Meta webhook URLs, WhatsApp tokens, or template app
 - Inbound WhatsApp text to Raven
 - Outbound Raven text to WhatsApp
 - Historical WhatsApp-to-Raven text backfill with preserved message timestamps
-- Manual backfill preview/run buttons on Bridge Settings
+- One-click backfill preview and full-history sync queue on Bridge Settings
 - Scheduled missed-message reconciliation (lookback + limit based)
 - Conversation/message mapping with idempotency links
 - Account-based routing
@@ -122,22 +124,23 @@ Bootstrap does not configure Meta webhook URLs, WhatsApp tokens, or template app
 
 ## Backfill (CLI)
 
-Preview first:
+Preview all local history first:
+
+```bash
+bench --site SITE execute whatsapp_raven_bridge.api.backfill.preview_all_message_history
+```
+
+Queue full-history import for all accounts:
+
+```bash
+bench --site SITE execute whatsapp_raven_bridge.api.backfill.enqueue_sync_all_message_history
+```
+
+Optional scoped/scheduled APIs remain available:
 
 ```bash
 bench --site SITE execute whatsapp_raven_bridge.api.backfill.preview_backfill --kwargs '{"whatsapp_account":"ACCOUNT","limit":100}'
-```
-
-Run import:
-
-```bash
 bench --site SITE execute whatsapp_raven_bridge.api.backfill.run_backfill --kwargs '{"whatsapp_account":"ACCOUNT","limit":100}'
-```
-
-Run scheduled reconciliation manually:
-
-```bash
-bench --site SITE execute whatsapp_raven_bridge.api.backfill.run_scheduled_backfill_now
 ```
 
 ## Testing

@@ -78,11 +78,9 @@ Desk-friendly setup is available from **WhatsApp Raven Bridge Settings**:
 - **Check Setup Status**
 - **Run Bootstrap Setup**
 - **Preview Backfill**
-- **Run Backfill Now**
-- **Run Scheduled Backfill Now**
+- **Sync All Message History Now**
 
-The setup dialog supports one primary route member for MVP simplicity.
-Use CLI bootstrap (`route_members`) when you need to seed multiple members at once.
+`Run Bootstrap Setup` runs with no dialog and bootstraps all available WhatsApp Accounts with default route membership to Administrator.
 
 ## Production Recommendation
 

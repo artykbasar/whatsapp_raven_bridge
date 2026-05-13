@@ -321,6 +321,37 @@ def bootstrap_whatsapp_raven_bridge(
 
 
 @frappe.whitelist()
+def bootstrap_all_accounts_from_settings() -> dict[str, Any]:
+	"""One-click bootstrap for all WhatsApp accounts using settings/default conventions."""
+	_require_setup_permission()
+	settings = get_settings()
+	if not settings:
+		frappe.throw(_("WhatsApp Raven Bridge Settings is missing. Please run migrate first."))
+
+	workspace_name = _resolve_bootstrap_workspace_name(settings)
+	bridge_bot_name = _resolve_bootstrap_bot_name(settings)
+	conversation_strategy = cstr(settings.get("conversation_strategy") or "Thread Per Contact").strip()
+	if conversation_strategy not in ("Thread Per Contact", "Channel Per Contact"):
+		conversation_strategy = "Thread Per Contact"
+
+	accounts = _get_all_whatsapp_accounts()
+	result = bootstrap_whatsapp_raven_bridge(
+		workspace_name=workspace_name,
+		bridge_bot_name=bridge_bot_name,
+		bridge_system_user=cstr(settings.get("bridge_system_user") or "").strip() or None,
+		whatsapp_accounts=accounts,
+		route_members=[{"raven_user": "Administrator", "is_admin": 1, "can_reply": 1}],
+		enable_outbound_replies=1,
+		enable_start_conversation=int(settings.get("enable_start_conversation") or 0),
+		conversation_strategy=conversation_strategy,
+		channel_type="Private",
+	)
+	result["auto_mode"] = "all_accounts_from_settings"
+	result["account_count"] = len(accounts)
+	return result
+
+
+@frappe.whitelist()
 def bootstrap_from_settings_dialog(
 	workspace_name: str | None = None,
 	bridge_bot_name: str | None = None,
@@ -460,6 +491,27 @@ def _coerce_list(value: Any) -> list[Any]:
 	if isinstance(value, dict):
 		return [value]
 	return [value]
+
+
+def _get_all_whatsapp_accounts() -> list[str]:
+	rows = frappe.get_all("WhatsApp Account", fields=["name"], order_by="modified desc")
+	return [cstr(row.name).strip() for row in rows if cstr(row.name).strip()]
+
+
+def _resolve_bootstrap_workspace_name(settings) -> str:
+	configured_workspace = cstr(settings.get("default_raven_workspace") or "").strip()
+	if configured_workspace:
+		return configured_workspace
+	if frappe.db.exists("Raven Workspace", "Raven"):
+		return "Raven"
+	return "WhatsApp Inbox"
+
+
+def _resolve_bootstrap_bot_name(settings) -> str:
+	configured_bot = cstr(settings.get("bridge_raven_bot") or "").strip()
+	if configured_bot:
+		return configured_bot
+	return "WhatsApp Bridge Bot"
 
 
 def _ensure_bridge_system_user(user_identifier: str | None) -> str | None:
@@ -650,6 +702,10 @@ def _create_or_update_route(
 		route.raven_workspace = workspace
 		route.channel_type = channel_type
 		route.conversation_strategy = conversation_strategy
+		if route.inbox_channel:
+			channel_workspace = frappe.db.get_value("Raven Channel", route.inbox_channel, "workspace")
+			if channel_workspace and cstr(channel_workspace).strip() != cstr(workspace).strip():
+				route.inbox_channel = None
 		if not route.inbox_channel_name:
 			route.inbox_channel_name = f"whatsapp-inbox-{_slugify(whatsapp_account)}"
 
