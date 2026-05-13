@@ -24,6 +24,12 @@ Open **WhatsApp Raven Bridge Settings** and set:
 - `bridge_raven_bot`
 - `bridge_raven_user` (sender identity for inbound mirrored Raven messages)
 - `enable_outbound_replies` = 1 for two-way text sync
+- optional scheduled backfill controls:
+  - `enable_scheduled_backfill`
+  - `scheduled_backfill_interval`
+  - `scheduled_backfill_lookback_hours`
+  - `scheduled_backfill_limit`
+  - `scheduled_backfill_direction`
 - optional fallback defaults:
   - `default_raven_workspace`
   - `default_channel_type`
@@ -71,6 +77,9 @@ Desk-friendly setup is available from **WhatsApp Raven Bridge Settings**:
 
 - **Check Setup Status**
 - **Run Bootstrap Setup**
+- **Preview Backfill**
+- **Run Backfill Now**
+- **Run Scheduled Backfill Now**
 
 The setup dialog supports one primary route member for MVP simplicity.
 Use CLI bootstrap (`route_members`) when you need to seed multiple members at once.
@@ -81,6 +90,10 @@ Use CLI bootstrap (`route_members`) when you need to seed multiple members at on
 - `Thread Per Contact` strategy
 - Explicit route members
 - Enable `can_reply` only for agents allowed to send WhatsApp replies
+- For scheduled reconciliation start with:
+  - `Hourly`
+  - `24` lookback hours
+  - `200` limit
 
 ## Bridge System User vs Bridge Raven Bot
 

@@ -15,7 +15,13 @@
   "content_type",
   "sync_status",
   "error",
-  "metadata"
+  "metadata",
+  "source_creation",
+  "source_modified",
+  "whatsapp_timestamp",
+  "original_message_datetime",
+  "imported_at",
+  "is_backfilled"
  ],
  "fields": [
   {
@@ -77,6 +83,37 @@
    "fieldname": "metadata",
    "fieldtype": "JSON",
    "label": "Metadata"
+  },
+  {
+   "fieldname": "source_creation",
+   "fieldtype": "Datetime",
+   "label": "Source Creation"
+  },
+  {
+   "fieldname": "source_modified",
+   "fieldtype": "Datetime",
+   "label": "Source Modified"
+  },
+  {
+   "fieldname": "whatsapp_timestamp",
+   "fieldtype": "Data",
+   "label": "WhatsApp Timestamp"
+  },
+  {
+   "fieldname": "original_message_datetime",
+   "fieldtype": "Datetime",
+   "label": "Original Message Datetime"
+  },
+  {
+   "fieldname": "imported_at",
+   "fieldtype": "Datetime",
+   "label": "Imported At"
+  },
+  {
+   "default": "0",
+   "fieldname": "is_backfilled",
+   "fieldtype": "Check",
+   "label": "Is Backfilled"
   }
  ],
  "index_web_pages_for_search": 1,

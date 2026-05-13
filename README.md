@@ -94,6 +94,9 @@ Bootstrap does not configure Meta webhook URLs, WhatsApp tokens, or template app
 
 - Inbound WhatsApp text to Raven
 - Outbound Raven text to WhatsApp
+- Historical WhatsApp-to-Raven text backfill with preserved message timestamps
+- Manual backfill preview/run buttons on Bridge Settings
+- Scheduled missed-message reconciliation (lookback + limit based)
 - Conversation/message mapping with idempotency links
 - Account-based routing
 - Thread-per-contact destination for account routes
@@ -116,6 +119,26 @@ Bootstrap does not configure Meta webhook URLs, WhatsApp tokens, or template app
 - Configuration: [docs/CONFIGURATION.md](docs/CONFIGURATION.md)
 - Usage: [docs/USAGE.md](docs/USAGE.md)
 - Troubleshooting: [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
+
+## Backfill (CLI)
+
+Preview first:
+
+```bash
+bench --site SITE execute whatsapp_raven_bridge.api.backfill.preview_backfill --kwargs '{"whatsapp_account":"ACCOUNT","limit":100}'
+```
+
+Run import:
+
+```bash
+bench --site SITE execute whatsapp_raven_bridge.api.backfill.run_backfill --kwargs '{"whatsapp_account":"ACCOUNT","limit":100}'
+```
+
+Run scheduled reconciliation manually:
+
+```bash
+bench --site SITE execute whatsapp_raven_bridge.api.backfill.run_scheduled_backfill_now
+```
 
 ## Testing
 

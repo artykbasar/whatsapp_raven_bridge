@@ -26,6 +26,39 @@ Current behavior is text-only two-way sync.
 4. `frappe_whatsapp` sends it through WhatsApp Cloud API integration.
 5. Bridge creates one **WhatsApp Raven Message Link** for idempotency.
 
+## Historical Backfill
+
+Backfill imports existing **WhatsApp Message** rows already stored in Frappe. It does not fetch unlimited history directly from Meta.
+
+Behavior:
+
+1. Preview candidates first (`dry_run=1`).
+2. Import only text messages for this phase.
+3. Create/reuse conversation + destination thread/channel.
+4. Insert Raven message, then set `Raven Message.creation/modified` to source WhatsApp/Frappe timestamp.
+5. Create **WhatsApp Raven Message Link** with `is_backfilled=1` and source timestamp fields.
+6. Never send to WhatsApp during backfill.
+
+CLI examples:
+
+```bash
+bench --site SITE execute whatsapp_raven_bridge.api.backfill.preview_backfill --kwargs '{"whatsapp_account":"ACCOUNT","limit":100}'
+bench --site SITE execute whatsapp_raven_bridge.api.backfill.run_backfill --kwargs '{"whatsapp_account":"ACCOUNT","limit":100}'
+bench --site SITE execute whatsapp_raven_bridge.api.backfill.run_scheduled_backfill_now
+```
+
+Desk actions (Settings):
+
+- **Preview Backfill**: dry-run summary only
+- **Run Backfill Now**: queues import job after confirmation
+- **Run Scheduled Backfill Now**: triggers scheduled policy immediately
+
+Scheduled reconciliation:
+
+- Controlled by Bridge Settings scheduled fields.
+- Uses lookback window + limit, so it scans recent missed records only.
+- Does not resend WhatsApp messages.
+
 ## Permissions
 
 - Routed inbox/thread visibility depends on route memberships.

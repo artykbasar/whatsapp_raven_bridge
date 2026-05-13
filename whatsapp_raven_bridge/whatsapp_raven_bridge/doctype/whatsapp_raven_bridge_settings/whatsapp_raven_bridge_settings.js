@@ -11,6 +11,18 @@ frappe.ui.form.on("WhatsApp Raven Bridge Settings", {
 		frm.add_custom_button(__("Run Bootstrap Setup"), async () => {
 			await open_bootstrap_dialog(frm);
 		});
+
+		frm.add_custom_button(__("Preview Backfill"), async () => {
+			await open_backfill_preview_dialog();
+		});
+
+		frm.add_custom_button(__("Run Backfill Now"), async () => {
+			await open_backfill_run_dialog(frm);
+		});
+
+		frm.add_custom_button(__("Run Scheduled Backfill Now"), async () => {
+			await run_scheduled_backfill_now(frm);
+		});
 	},
 });
 
@@ -208,4 +220,188 @@ async function get_current_session_raven_user() {
 
 function bool_to_yes_no(value) {
 	return value ? "Yes" : "No";
+}
+
+function get_backfill_filter_fields() {
+	return [
+		{
+			fieldname: "whatsapp_account",
+			label: __("WhatsApp Account"),
+			fieldtype: "Link",
+			options: "WhatsApp Account",
+		},
+		{
+			fieldname: "phone_number",
+			label: __("Phone Number"),
+			fieldtype: "Data",
+		},
+		{
+			fieldname: "from_datetime",
+			label: __("From Datetime"),
+			fieldtype: "Datetime",
+		},
+		{
+			fieldname: "to_datetime",
+			label: __("To Datetime"),
+			fieldtype: "Datetime",
+		},
+		{
+			fieldname: "direction",
+			label: __("Direction"),
+			fieldtype: "Select",
+			options: ["Both", "Incoming", "Outgoing"],
+			default: "Both",
+		},
+		{
+			fieldname: "limit",
+			label: __("Limit"),
+			fieldtype: "Int",
+			default: 100,
+			reqd: 1,
+		},
+	];
+}
+
+async function open_backfill_preview_dialog() {
+	const dialog = new frappe.ui.Dialog({
+		title: __("Preview Backfill"),
+		fields: get_backfill_filter_fields(),
+		primary_action_label: __("Preview"),
+		primary_action: async () => {
+			const values = dialog.get_values();
+			if (!values) return;
+			dialog.hide();
+			frappe.dom.freeze(__("Previewing backfill candidates..."));
+			try {
+				const args = {
+					...values,
+					direction: values.direction === "Both" ? null : values.direction,
+				};
+				const response = await frappe.call({
+					method: "whatsapp_raven_bridge.api.backfill.preview_backfill",
+					args,
+				});
+				show_backfill_preview(response.message || {});
+			} finally {
+				frappe.dom.unfreeze();
+			}
+		},
+	});
+	dialog.show();
+}
+
+function show_backfill_preview(summary) {
+	const rows = [
+		["Scanned", String(summary.scanned || 0)],
+		["Eligible", String(summary.eligible || 0)],
+		["Skipped Existing", String(summary.skipped_existing || 0)],
+	];
+	const byDirection = summary.by_direction || {};
+	const byAccount = summary.by_account || {};
+	const byPhone = summary.by_phone || {};
+
+	const tableHtml = `
+		<table class="table table-bordered">
+			<tbody>
+				${rows
+					.map(
+						([label, value]) =>
+							`<tr><td><strong>${frappe.utils.escape_html(label)}</strong></td><td>${frappe.utils.escape_html(value)}</td></tr>`
+					)
+					.join("")}
+			</tbody>
+		</table>
+	`;
+
+	const directionHtml = Object.keys(byDirection).length
+		? `<ul>${Object.entries(byDirection)
+				.map(([k, v]) => `<li>${frappe.utils.escape_html(k)}: ${frappe.utils.escape_html(String(v))}</li>`)
+				.join("")}</ul>`
+		: "<p>None</p>";
+	const accountHtml = Object.keys(byAccount).length
+		? `<ul>${Object.entries(byAccount)
+				.map(([k, v]) => `<li>${frappe.utils.escape_html(k)}: ${frappe.utils.escape_html(String(v))}</li>`)
+				.join("")}</ul>`
+		: "<p>None</p>";
+	const phoneHtml = Object.keys(byPhone).length
+		? `<ul>${Object.entries(byPhone)
+				.slice(0, 20)
+				.map(([k, v]) => `<li>${frappe.utils.escape_html(k)}: ${frappe.utils.escape_html(String(v))}</li>`)
+				.join("")}</ul>`
+		: "<p>None</p>";
+
+	frappe.msgprint({
+		title: __("Backfill Preview"),
+		wide: true,
+		message: `
+			${tableHtml}
+			<h5>${__("By Direction")}</h5>
+			${directionHtml}
+			<h5>${__("By Account")}</h5>
+			${accountHtml}
+			<h5>${__("By Phone (Top 20)")}</h5>
+			${phoneHtml}
+		`,
+	});
+}
+
+async function open_backfill_run_dialog(frm) {
+	const dialog = new frappe.ui.Dialog({
+		title: __("Run Backfill Now"),
+		fields: get_backfill_filter_fields(),
+		primary_action_label: __("Queue Backfill"),
+		primary_action: async () => {
+			const values = dialog.get_values();
+			if (!values) return;
+			dialog.hide();
+			frappe.confirm(
+				__(
+					"This will create Raven messages for existing WhatsApp Message records. It will not send WhatsApp messages."
+				),
+				async () => {
+					frappe.dom.freeze(__("Queueing backfill job..."));
+					try {
+						const args = {
+							...values,
+							direction: values.direction === "Both" ? null : values.direction,
+						};
+						const response = await frappe.call({
+							method: "whatsapp_raven_bridge.api.backfill.enqueue_backfill",
+							args,
+						});
+						const result = response.message || {};
+						await frm.reload_doc();
+						frappe.msgprint({
+							title: __("Backfill"),
+							message: result.job_id
+								? __("Backfill job queued: {0}", [result.job_id])
+								: __("Backfill request result: {0}", [result.status || "unknown"]),
+						});
+					} finally {
+						frappe.dom.unfreeze();
+					}
+				}
+			);
+		},
+	});
+	dialog.show();
+}
+
+async function run_scheduled_backfill_now(frm) {
+	frappe.dom.freeze(__("Queueing scheduled backfill..."));
+	try {
+		const response = await frappe.call({
+			method: "whatsapp_raven_bridge.api.backfill.run_scheduled_backfill_now",
+		});
+		const result = response.message || {};
+		await frm.reload_doc();
+		frappe.msgprint({
+			title: __("Scheduled Backfill"),
+			message: result.job_id
+				? __("Scheduled backfill job queued: {0}", [result.job_id])
+				: __("Scheduled backfill result: {0}", [result.status || "unknown"]),
+		});
+	} finally {
+		frappe.dom.unfreeze();
+	}
 }

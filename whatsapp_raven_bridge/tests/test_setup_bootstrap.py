@@ -364,6 +364,8 @@ class TestSetupBootstrapAndServiceUser(IntegrationTestCase):
 		self.assertNotIn("Create / Use Default Bridge System User", js)
 		self.assertIn("Check Setup Status", js)
 		self.assertIn("Run Bootstrap Setup", js)
+		self.assertIn("Preview Backfill", js)
+		self.assertIn("Run Backfill Now", js)
 		self.assertNotIn("fieldname: \"bridge_system_user\"", js)
 
 	def test_bootstrap_from_settings_dialog_without_bridge_system_user_uses_default_path(self):
@@ -823,6 +825,15 @@ class TestSetupBootstrapAndServiceUser(IntegrationTestCase):
 			"conversation_strategy": settings.conversation_strategy,
 			"enable_outbound_replies": settings.enable_outbound_replies,
 			"enable_start_conversation": settings.enable_start_conversation,
+			"enable_scheduled_backfill": settings.enable_scheduled_backfill,
+			"scheduled_backfill_interval": settings.scheduled_backfill_interval,
+			"scheduled_backfill_lookback_hours": settings.scheduled_backfill_lookback_hours,
+			"scheduled_backfill_limit": settings.scheduled_backfill_limit,
+			"scheduled_backfill_direction": settings.scheduled_backfill_direction,
+			"last_scheduled_backfill_at": settings.last_scheduled_backfill_at,
+			"last_scheduled_backfill_status": settings.last_scheduled_backfill_status,
+			"last_scheduled_backfill_summary": settings.last_scheduled_backfill_summary,
+			"last_backfill_job_id": settings.last_backfill_job_id,
 			"default_channel_members": [
 				{"raven_user": row.raven_user, "is_admin": row.is_admin}
 				for row in (settings.default_channel_members or [])

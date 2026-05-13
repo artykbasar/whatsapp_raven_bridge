@@ -152,6 +152,14 @@ doc_events = {
 	},
 }
 
+scheduler_events = {
+	"cron": {
+		"*/5 * * * *": [
+			"whatsapp_raven_bridge.bridge.backfill.run_scheduled_backfill_if_due",
+		]
+	}
+}
+
 # Scheduled Tasks
 # ---------------
 
