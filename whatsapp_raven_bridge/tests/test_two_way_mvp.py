@@ -114,8 +114,12 @@ class TestTwoWayMVPHardening(IntegrationTestCase):
 		self.assertTrue(link.raven_message)
 
 		raven_message = frappe.get_doc("Raven Message", link.raven_message)
-		self.assertEqual(raven_message.link_doctype, "WhatsApp Message")
-		self.assertEqual(raven_message.link_document, incoming.name)
+		self.assertIn("Profile", cstr(raven_message.text))
+		self.assertFalse(cstr(raven_message.link_doctype))
+		self.assertFalse(cstr(raven_message.link_document))
+		self.assertEqual(int(raven_message.hide_link_preview or 0), 1)
+		self.assertIn(f'href="/app/whatsapp-message/{incoming.name}"', cstr(raven_message.text))
+		self.assertIn("· WhatsApp", cstr(raven_message.text))
 		self.assertEqual(raven_message.channel_id, channel.name)
 		self.assertEqual(cstr(raven_message.message_type), "Text")
 
@@ -130,13 +134,28 @@ class TestTwoWayMVPHardening(IntegrationTestCase):
 			frappe.db.count("WhatsApp Raven Message Link", {"whatsapp_message_id": message_id}),
 			1,
 		)
-		self.assertEqual(
-			frappe.db.count(
-				"Raven Message",
-				{"link_doctype": "WhatsApp Message", "link_document": incoming.name},
-			),
-			1,
-		)
+		self.assertTrue(frappe.db.exists("Raven Message", link.raven_message))
+
+	def test_01b_incoming_header_falls_back_to_phone_when_profile_missing(self):
+		phone = self._phone("15")
+		normalized_phone = normalize_phone_number(phone)
+		payload = {
+			"doctype": "WhatsApp Message",
+			"type": "Incoming",
+			"content_type": "text",
+			"message_type": "Manual",
+			"from": phone,
+			"profile_name": "",
+			"message": f"{self.PREFIX} incoming 01b",
+			"message_id": self._message_id("15"),
+			"whatsapp_account": self.ACCOUNT_NAME,
+		}
+		incoming = frappe.get_doc(payload).insert(ignore_permissions=True)
+		link_name = frappe.db.get_value("WhatsApp Raven Message Link", {"whatsapp_message": incoming.name}, "name")
+		self.assertTrue(link_name)
+		raven_name = frappe.db.get_value("WhatsApp Raven Message Link", link_name, "raven_message")
+		raven_message = frappe.get_doc("Raven Message", raven_name)
+		self.assertIn(f"<strong>{normalized_phone} · WhatsApp</strong>", cstr(raven_message.text))
 
 	def test_02_reprocessing_same_whatsapp_message_is_idempotent(self):
 		message_id = self._message_id("02")
@@ -194,10 +213,7 @@ class TestTwoWayMVPHardening(IntegrationTestCase):
 			frappe.db.exists("WhatsApp Raven Message Link", {"whatsapp_message": second.name})
 		)
 		self.assertFalse(
-			frappe.db.exists(
-				"Raven Message",
-				{"link_doctype": "WhatsApp Message", "link_document": second.name},
-			)
+			frappe.db.exists("WhatsApp Raven Message Link", {"whatsapp_message": second.name})
 		)
 		self.assertEqual(frappe.db.count("Raven Message"), before_raven)
 
@@ -212,10 +228,7 @@ class TestTwoWayMVPHardening(IntegrationTestCase):
 
 		self.assertFalse(frappe.db.exists("WhatsApp Raven Message Link", {"whatsapp_message": outgoing.name}))
 		self.assertFalse(
-			frappe.db.exists(
-				"Raven Message",
-				{"link_doctype": "WhatsApp Message", "link_document": outgoing.name},
-			)
+			frappe.db.exists("WhatsApp Raven Message Link", {"whatsapp_message": outgoing.name})
 		)
 		self.assertEqual(process_incoming_whatsapp_message(outgoing), "skipped_outgoing")
 
@@ -230,10 +243,7 @@ class TestTwoWayMVPHardening(IntegrationTestCase):
 
 		self.assertFalse(frappe.db.exists("WhatsApp Raven Message Link", {"whatsapp_message": doc.name}))
 		self.assertFalse(
-			frappe.db.exists(
-				"Raven Message",
-				{"link_doctype": "WhatsApp Message", "link_document": doc.name},
-			)
+			frappe.db.exists("WhatsApp Raven Message Link", {"whatsapp_message": doc.name})
 		)
 		self.assertEqual(process_incoming_whatsapp_message(doc), "skipped_unsupported_content_type")
 
@@ -333,6 +343,29 @@ class TestTwoWayMVPHardening(IntegrationTestCase):
 			process_outgoing_raven_message(raven_message),
 			"skipped_linked_whatsapp_source",
 		)
+
+	def test_09b_inbound_metadata_mirror_without_link_fields_is_ignored(self):
+		conversation = self._ensure_conversation("91")
+		raven_message = self._insert_raven_message(
+			channel_id=conversation.raven_channel,
+			text=f"<p>{self.PREFIX} outbound 09b mirror</p>",
+			is_bot_message=0,
+			json_data={"source": "whatsapp", "direction": "incoming"},
+		)
+		self.assertEqual(process_outgoing_raven_message(raven_message), "skipped_source_whatsapp")
+		self.assertFalse(frappe.db.exists("WhatsApp Raven Message Link", {"raven_message": raven_message.name}))
+
+	def test_09c_backfilled_bot_metadata_without_link_fields_is_ignored(self):
+		conversation = self._ensure_conversation("92")
+		raven_message = self._insert_raven_message(
+			channel_id=conversation.raven_channel,
+			text=f"<p>{self.PREFIX} outbound 09c mirror</p>",
+			is_bot_message=1,
+			bot=self.bridge_raven_user,
+			json_data={"source": "whatsapp_backfill", "direction": "outgoing_import"},
+		)
+		self.assertEqual(process_outgoing_raven_message(raven_message), "skipped_bot_message")
+		self.assertFalse(frappe.db.exists("WhatsApp Raven Message Link", {"raven_message": raven_message.name}))
 
 	def test_10_raven_messages_outside_mapped_channels_are_ignored(self):
 		channel = self._ensure_non_mapped_channel("10")

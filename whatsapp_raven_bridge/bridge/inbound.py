@@ -6,7 +6,7 @@ import json
 
 import frappe
 from frappe import _
-from frappe.utils import cstr, escape_html, now
+from frappe.utils import cstr, now
 
 from whatsapp_raven_bridge.bridge.conversation import (
 	create_message_link,
@@ -16,6 +16,11 @@ from whatsapp_raven_bridge.bridge.conversation import (
 	normalize_phone_number,
 )
 from whatsapp_raven_bridge.bridge.raven_destination import ensure_raven_destination
+from whatsapp_raven_bridge.bridge.whatsapp_message_rendering import (
+	build_whatsapp_origin_message_content,
+	build_whatsapp_origin_message_html,
+	incoming_header_label,
+)
 from whatsapp_raven_bridge.utils.settings import get_settings
 
 
@@ -108,11 +113,14 @@ def process_incoming_whatsapp_message(doc):
 				"channel_id": raven_channel.name,
 				"message_type": "Text",
 				"text": raven_text,
+				"content": build_whatsapp_origin_message_content(
+					incoming_header_label(doc.get("profile_name"), normalized_phone),
+					doc.get("message"),
+				),
 				"json": metadata,
 				"is_bot_message": 1,
 				"bot": settings.get("bridge_raven_user"),
-				"link_doctype": "WhatsApp Message",
-				"link_document": doc.name,
+				"hide_link_preview": 1,
 			}
 		).insert(ignore_permissions=True)
 
@@ -163,17 +171,11 @@ def get_whatsapp_message_idempotency_key(doc):
 
 
 def build_raven_text_from_whatsapp(doc, normalized_phone):
-	sender = escape_html(cstr(doc.get("profile_name")).strip() or "Unknown Sender")
-	phone = escape_html(cstr(normalized_phone or doc.get("from")).strip() or "unknown")
-	body = cstr(doc.get("message") or "").strip()
-
-	if body:
-		safe_body = escape_html(body).replace("\n", "<br>")
-		body_html = f"<p>{safe_body}</p>"
-	else:
-		body_html = "<p><em>Empty WhatsApp text message</em></p>"
-
-	return f"<p><strong>WhatsApp from {sender}</strong> <code>{phone}</code></p>{body_html}"
+	return build_whatsapp_origin_message_html(
+		whatsapp_message_name=doc.name,
+		header_label=incoming_header_label(doc.get("profile_name"), normalized_phone),
+		body_text=doc.get("message"),
+	)
 
 
 def build_raven_metadata(doc, normalized_phone):

@@ -31,6 +31,12 @@ Inspect **WhatsApp Raven Message Link** records:
 
 Also confirm incoming retries keep the same WhatsApp `message_id`.
 
+## Raven shows large WhatsApp document cards
+
+Current bridge behavior is compact clickable headers for WhatsApp-origin lines.
+If older rows still show large WhatsApp document cards, run migrate (or admin repair API)
+to reformat legacy bridge-created rows while preserving timestamps and link mappings.
+
 ## Backfill order looks wrong
 
 Backfill sets `Raven Message.creation/modified` from source WhatsApp/Frappe timestamps.
