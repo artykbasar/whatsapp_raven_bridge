@@ -12,6 +12,7 @@ from whatsapp_raven_bridge.bridge.account_route import (
 from whatsapp_raven_bridge.bridge.conversation import get_or_create_conversation, normalize_phone_number
 from whatsapp_raven_bridge.bridge.outbound import process_outgoing_raven_message
 from whatsapp_raven_bridge.bridge.raven_destination import ensure_raven_destination
+from whatsapp_raven_bridge.bridge.whatsapp_message_rendering import format_phone_for_display
 
 
 class TestAccountRouteDesign(IntegrationTestCase):
@@ -185,8 +186,9 @@ class TestAccountRouteDesign(IntegrationTestCase):
 		self.assertNotIn("target=", parent_message.text)
 		self.assertNotIn("onclick=", parent_message.text)
 		self.assertNotIn("style=", parent_message.text)
-		self.assertIn(phone_norm, parent_message.text)
-		self.assertIn("<strong>", parent_message.text)
+		self.assertIn("<mark><strong>", parent_message.text)
+		self.assertIn("<code>", parent_message.text)
+		self.assertIn(format_phone_for_display(phone_norm), parent_message.text)
 		self.assertNotIn("WhatsApp Raven Conversation", parent_message.text)
 		self.assertNotIn("WhatsApp conversation", parent_message.text)
 		self.assertNotIn(conversation.name, parent_message.text)

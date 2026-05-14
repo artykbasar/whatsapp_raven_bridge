@@ -124,7 +124,8 @@ For WhatsApp-origin mirrored/imported messages, the bridge keeps source mapping 
 **WhatsApp Raven Message Link** and renders a compact clickable header in Raven.
 Incoming headers are highlighted; outgoing imported/backfilled headers are not.
 It does not attach each chat line as a visible WhatsApp Message document card.
-Thread starter rows in account inbox now render as plain contact + phone labels
+Thread starter rows in account inbox now render as highlighted contact labels plus
+code-formatted phone identifiers with leading `+`
 instead of large `WhatsApp Raven Conversation` document cards.
 Parent starters intentionally avoid custom links and rely on Raven’s built-in **View Thread** action.
 

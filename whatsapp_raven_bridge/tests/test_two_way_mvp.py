@@ -15,6 +15,7 @@ from whatsapp_raven_bridge.bridge.outbound import (
 	process_outgoing_raven_message,
 )
 from whatsapp_raven_bridge.bridge.raven_destination import ensure_raven_destination
+from whatsapp_raven_bridge.bridge.whatsapp_message_rendering import format_phone_for_display
 
 
 class TestTwoWayMVPHardening(IntegrationTestCase):
@@ -159,7 +160,10 @@ class TestTwoWayMVPHardening(IntegrationTestCase):
 		self.assertTrue(link_name)
 		raven_name = frappe.db.get_value("WhatsApp Raven Message Link", link_name, "raven_message")
 		raven_message = frappe.get_doc("Raven Message", raven_name)
-		self.assertIn(f"<mark><strong>{normalized_phone}</strong></mark>", cstr(raven_message.text))
+		self.assertIn(
+			f"<mark><strong>{format_phone_for_display(normalized_phone)}</strong></mark>",
+			cstr(raven_message.text),
+		)
 		self.assertNotIn("· WhatsApp", cstr(raven_message.text))
 		self.assertIn("</a></p><p>", cstr(raven_message.text))
 		self.assertNotIn("<p><br></p>", cstr(raven_message.text))

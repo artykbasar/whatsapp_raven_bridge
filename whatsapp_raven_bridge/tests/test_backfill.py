@@ -30,6 +30,7 @@ from whatsapp_raven_bridge.bridge.backfill import (
 	run_scheduled_backfill_if_due,
 	run_scheduled_backfill_now,
 )
+from whatsapp_raven_bridge.bridge.whatsapp_message_rendering import format_phone_for_display
 
 
 class TestHistoricalBackfill(IntegrationTestCase):
@@ -817,8 +818,9 @@ class TestHistoricalBackfill(IntegrationTestCase):
 		self.assertNotIn("target=", cstr(parent_message.text))
 		self.assertNotIn("onclick=", cstr(parent_message.text))
 		self.assertNotIn("style=", cstr(parent_message.text))
-		self.assertIn("447744100001", cstr(parent_message.text))
-		self.assertIn("<strong>", cstr(parent_message.text))
+		self.assertIn("<mark><strong>", cstr(parent_message.text))
+		self.assertIn("<code>", cstr(parent_message.text))
+		self.assertIn(format_phone_for_display("447744100001"), cstr(parent_message.text))
 
 	def test_x_reformat_skips_human_outgoing_replies_and_is_idempotent(self):
 		conversation_name = frappe.db.get_value(
@@ -927,8 +929,9 @@ class TestHistoricalBackfill(IntegrationTestCase):
 		self.assertNotIn("target=", cstr(parent_message.text))
 		self.assertNotIn("onclick=", cstr(parent_message.text))
 		self.assertNotIn("style=", cstr(parent_message.text))
-		self.assertIn("447744100001", cstr(parent_message.text))
-		self.assertIn("<strong>", cstr(parent_message.text))
+		self.assertIn("<mark><strong>", cstr(parent_message.text))
+		self.assertIn("<code>", cstr(parent_message.text))
+		self.assertIn(format_phone_for_display("447744100001"), cstr(parent_message.text))
 		self.assertNotIn("WhatsApp Raven Conversation", cstr(parent_message.text))
 		self.assertNotIn("WhatsApp conversation", cstr(parent_message.text))
 		self.assertNotIn("STYLE TEST", cstr(parent_message.text))
@@ -991,6 +994,9 @@ class TestHistoricalBackfill(IntegrationTestCase):
 		self.assertNotIn("href=", cstr(parent_doc.text))
 		self.assertNotIn("/raven/", cstr(parent_doc.text))
 		self.assertNotIn("/thread/", cstr(parent_doc.text))
+		self.assertIn("<mark><strong>", cstr(parent_doc.text))
+		self.assertIn("<code>", cstr(parent_doc.text))
+		self.assertIn(format_phone_for_display("447744100001"), cstr(parent_doc.text))
 		self.assertNotIn("STYLE TEST", cstr(parent_doc.text))
 		self.assertNotIn("TARGET SELF TEST", cstr(parent_doc.text))
 		self.assertNotIn("TARGET BLANK TEST", cstr(parent_doc.text))

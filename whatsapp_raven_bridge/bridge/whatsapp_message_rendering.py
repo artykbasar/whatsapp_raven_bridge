@@ -9,6 +9,13 @@ from frappe.utils import cstr, escape_html
 
 from whatsapp_raven_bridge.utils.settings import get_bridge_system_user
 
+try:
+	import phonenumbers
+	from phonenumbers import PhoneNumberFormat
+except Exception:  # pragma: no cover - optional dependency
+	phonenumbers = None
+	PhoneNumberFormat = None
+
 
 def desk_whatsapp_message_route(whatsapp_message_name: str) -> str:
 	"""Return the local Desk route for a WhatsApp Message document."""
@@ -27,10 +34,10 @@ def build_parent_thread_starter_html(
 	# Keep params for API stability at call sites while intentionally not using them.
 	_ = workspace_id, inbox_channel_id, thread_id
 	label = cstr(contact_label or "").strip() or "Unknown WhatsApp Contact"
-	phone = cstr(phone_number or "").strip()
-	lines = [f"<p><strong>{escape_html(label)}</strong></p>"]
+	phone = format_phone_for_display(phone_number)
+	lines = [f"<p><mark><strong>{escape_html(label)}</strong></mark></p>"]
 	if phone:
-		lines.append(f"<p>{escape_html(phone)}</p>")
+		lines.append(f"<p><code>{escape_html(phone)}</code></p>")
 	return "".join(lines)
 
 
@@ -69,10 +76,31 @@ def incoming_header_label(profile_name: str | None, normalized_phone: str | None
 	name = cstr(profile_name or "").strip()
 	if name:
 		return name
-	phone = cstr(normalized_phone or "").strip()
+	phone = format_phone_for_display(normalized_phone)
 	if phone:
 		return phone
 	return "Unknown WhatsApp Contact"
+
+
+def format_phone_for_display(phone_number: str | None) -> str:
+	"""Return a safe display phone with leading + and international formatting when possible."""
+	raw = cstr(phone_number or "").strip()
+	if not raw:
+		return ""
+
+	digits = "".join(ch for ch in raw if ch.isdigit())
+	if not digits:
+		return ""
+
+	candidate = raw if raw.startswith("+") else f"+{digits}"
+	if phonenumbers and candidate.startswith("+"):
+		try:
+			parsed = phonenumbers.parse(candidate, None)
+			return phonenumbers.format_number(parsed, PhoneNumberFormat.INTERNATIONAL)
+		except Exception:
+			pass
+
+	return f"+{digits}"
 
 
 def outgoing_import_header_label() -> str:

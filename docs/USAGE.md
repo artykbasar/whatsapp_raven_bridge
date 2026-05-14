@@ -21,7 +21,8 @@ Current behavior is text-only two-way sync.
    - Message header is a clickable link to `/app/whatsapp-message/<name>`.
    - Incoming headers are highlighted with compact normal line spacing.
    - Individual mirrored chat lines do not render as large WhatsApp document cards.
-   - Account inbox parent/thread starter rows are plain contact name + phone (no custom links).
+   - Account inbox parent/thread starter rows show highlighted contact name plus code-formatted phone (no custom links).
+   - Phone display always includes a leading `+` and uses international spacing when available.
    - Open threads from Raven’s built-in **View Thread** button.
 5. Bridge creates one **WhatsApp Raven Message Link** for idempotency.
 

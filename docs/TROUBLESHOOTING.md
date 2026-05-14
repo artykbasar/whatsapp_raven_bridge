@@ -36,7 +36,8 @@ Also confirm incoming retries keep the same WhatsApp `message_id`.
 Current bridge behavior is compact clickable headers for WhatsApp-origin lines.
 Incoming headers are highlighted; outgoing imported/backfilled headers are not.
 Headers show compact contact/agent names only (no `· WhatsApp` suffix).
-Account inbox thread-starter rows should show plain contact+phone labels (no `WhatsApp Raven Conversation` card, no custom thread links).
+Account inbox thread-starter rows should show highlighted contact labels with code-formatted phone numbers (leading `+`) and no custom thread links.
+When the `phonenumbers` package is available, phone numbers are displayed with international spacing.
 Use Raven’s built-in **View Thread** button to open the thread.
 If older rows still show large WhatsApp document cards, run migrate (or admin repair API)
 to reformat legacy bridge-created rows while preserving timestamps and link mappings.
