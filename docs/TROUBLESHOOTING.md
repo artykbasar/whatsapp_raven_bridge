@@ -36,6 +36,7 @@ Also confirm incoming retries keep the same WhatsApp `message_id`.
 Current bridge behavior is compact clickable headers for WhatsApp-origin lines.
 Incoming headers are highlighted; outgoing imported/backfilled headers are not.
 Headers show compact contact/agent names only (no `· WhatsApp` suffix).
+Account inbox thread-starter rows should also be clean contact+phone thread links (no `WhatsApp Raven Conversation` card).
 If older rows still show large WhatsApp document cards, run migrate (or admin repair API)
 to reformat legacy bridge-created rows while preserving timestamps and link mappings.
 

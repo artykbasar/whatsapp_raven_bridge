@@ -124,7 +124,8 @@ For WhatsApp-origin mirrored/imported messages, the bridge keeps source mapping 
 **WhatsApp Raven Message Link** and renders a compact clickable header in Raven.
 Incoming headers are highlighted; outgoing imported/backfilled headers are not.
 It does not attach each chat line as a visible WhatsApp Message document card.
-Parent thread/inbox conversation cards remain unchanged.
+Thread starter rows in account inbox now render as clean contact + phone links to the Raven thread
+instead of large `WhatsApp Raven Conversation` document cards.
 
 Recommended bot display name is `WhatsApp`; Raven adds its own bot badge in UI.
 Legacy default bot label `WhatsApp Bridge Bot` is repaired to `WhatsApp` by setup/migrate repair helpers when safe.

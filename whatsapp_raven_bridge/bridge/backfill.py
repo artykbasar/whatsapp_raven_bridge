@@ -22,6 +22,7 @@ from whatsapp_raven_bridge.bridge.raven_destination import ensure_raven_destinat
 from whatsapp_raven_bridge.bridge.whatsapp_message_rendering import (
 	build_whatsapp_origin_message_content,
 	build_whatsapp_origin_message_html,
+	build_parent_thread_starter_html,
 	get_outgoing_whatsapp_agent_label,
 	incoming_header_label,
 )
@@ -794,6 +795,97 @@ def reformat_existing_whatsapp_origin_raven_messages() -> frappe._dict:
 					"link": cstr(link.get("name") or "").strip(),
 					"raven_message": cstr(link.get("raven_message") or "").strip(),
 					"whatsapp_message": cstr(link.get("whatsapp_message") or "").strip(),
+					"error": frappe.get_traceback(),
+				}
+			)
+
+	for channel_id in sorted(touched_channels):
+		refresh_thread_last_message_state(channel_id)
+
+	return summary
+
+
+def reformat_existing_parent_thread_messages() -> frappe._dict:
+	"""Rewrite old parent thread-starter rows into compact thread-link format."""
+	summary = frappe._dict(
+		{
+			"scanned_conversations": 0,
+			"reformatted": 0,
+			"skipped_missing_parent_message": 0,
+			"skipped_not_thread_route": 0,
+			"skipped_unrelated": 0,
+			"errors": [],
+		}
+	)
+	touched_channels = set()
+	conversations = frappe.get_all(
+		"WhatsApp Raven Conversation",
+		filters=[["parent_raven_message", "is", "set"]],
+		fields=["name", "phone_number", "display_name", "parent_raven_message", "account_route", "raven_channel"],
+	)
+	summary.scanned_conversations = len(conversations)
+
+	for row in conversations:
+		try:
+			parent_name = cstr(row.get("parent_raven_message") or "").strip()
+			if not parent_name or not frappe.db.exists("Raven Message", parent_name):
+				summary.skipped_missing_parent_message += 1
+				continue
+
+			parent_message = frappe.get_doc("Raven Message", parent_name)
+			metadata = _as_dict(parent_message.get("json"))
+			if cstr(metadata.get("purpose") or "").strip().lower() != "thread_parent" and not cint(parent_message.get("is_thread")):
+				summary.skipped_not_thread_route += 1
+				continue
+
+			inbox_channel_name = cstr(parent_message.get("channel_id") or "").strip()
+			if not inbox_channel_name or not frappe.db.exists("Raven Channel", inbox_channel_name):
+				summary.skipped_missing_parent_message += 1
+				continue
+			inbox_channel = frappe.get_doc("Raven Channel", inbox_channel_name)
+			workspace_id = cstr(inbox_channel.get("workspace") or "").strip()
+			if not workspace_id:
+				summary.skipped_unrelated += 1
+				continue
+
+			contact_label = cstr(row.get("display_name") or "").strip() or cstr(row.get("phone_number") or "").strip() or "Unknown WhatsApp Contact"
+			phone = cstr(row.get("phone_number") or "").strip()
+			new_text = build_parent_thread_starter_html(
+				workspace_id=workspace_id,
+				inbox_channel_id=inbox_channel_name,
+				thread_id=parent_name,
+				contact_label=contact_label,
+				phone_number=phone,
+			)
+
+			if (
+				cstr(parent_message.get("text") or "") == cstr(new_text)
+				and not cstr(parent_message.get("link_doctype") or "").strip()
+				and not cstr(parent_message.get("link_document") or "").strip()
+				and cint(parent_message.get("hide_link_preview") or 0) == 1
+			):
+				summary.skipped_unrelated += 1
+				continue
+
+			frappe.db.set_value(
+				"Raven Message",
+				parent_name,
+				{
+					"text": new_text,
+					"hide_link_preview": 1,
+					"link_doctype": None,
+					"link_document": None,
+				},
+				update_modified=False,
+			)
+			frappe.clear_document_cache("Raven Message", parent_name)
+			touched_channels.add(inbox_channel_name)
+			summary.reformatted += 1
+		except Exception:
+			summary.errors.append(
+				{
+					"conversation": cstr(row.get("name") or "").strip(),
+					"parent_raven_message": cstr(row.get("parent_raven_message") or "").strip(),
 					"error": frappe.get_traceback(),
 				}
 			)

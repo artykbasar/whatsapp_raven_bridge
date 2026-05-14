@@ -12,6 +12,7 @@ from whatsapp_raven_bridge.bridge.backfill import (
 	backfill_whatsapp_messages,
 	enqueue_scheduled_backfill,
 	preview_missed_whatsapp_messages,
+	reformat_existing_parent_thread_messages as reformat_existing_parent_thread_messages_internal,
 	reformat_existing_whatsapp_origin_raven_messages as reformat_existing_whatsapp_origin_raven_messages_internal,
 	release_backfill_lock,
 	run_scheduled_backfill_now as run_scheduled_backfill_now_internal,
@@ -176,3 +177,10 @@ def reformat_existing_whatsapp_origin_raven_messages() -> dict[str, Any]:
 	"""Repair older bridge-created WhatsApp-origin Raven messages to the compact chat format."""
 	_require_backfill_permission()
 	return dict(reformat_existing_whatsapp_origin_raven_messages_internal())
+
+
+@frappe.whitelist()
+def reformat_existing_parent_thread_messages() -> dict[str, Any]:
+	"""Repair older thread parent starter messages to clean Raven-thread links."""
+	_require_backfill_permission()
+	return dict(reformat_existing_parent_thread_messages_internal())

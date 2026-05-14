@@ -14,6 +14,7 @@ from whatsapp_raven_bridge.bridge.account_route import (
 	get_or_create_inbox_channel,
 	get_route_for_whatsapp_account,
 )
+from whatsapp_raven_bridge.bridge.whatsapp_message_rendering import build_parent_thread_starter_html
 from whatsapp_raven_bridge.utils.settings import bridge_user_context, get_settings
 
 CONVERSATION_DOCTYPE = "WhatsApp Raven Conversation"
@@ -335,8 +336,9 @@ def _get_existing_thread_channel(conversation_doc, parent_message=None):
 
 
 def _create_parent_thread_message(conversation_doc, route_doc, settings, inbox_channel):
-	phone = escape_html(cstr(conversation_doc.phone_number or "unknown"))
-	text = f"<p><strong>WhatsApp conversation</strong> <code>{phone}</code></p>"
+	phone = cstr(conversation_doc.phone_number or "").strip()
+	contact_label = cstr(conversation_doc.display_name or "").strip() or phone or "Unknown WhatsApp Contact"
+	text = f"<p><strong>{escape_html(contact_label)}</strong></p><p>{escape_html(phone or 'Unknown')}</p>"
 	metadata = {
 		"source": "whatsapp_raven_bridge",
 		"purpose": "thread_parent",
@@ -350,7 +352,7 @@ def _create_parent_thread_message(conversation_doc, route_doc, settings, inbox_c
 	try:
 		frappe.flags.whatsapp_raven_bridge_syncing = True
 		with bridge_user_context():
-			return frappe.get_doc(
+			parent_message = frappe.get_doc(
 				{
 					"doctype": RAVEN_MESSAGE_DOCTYPE,
 					"channel_id": inbox_channel.name,
@@ -358,11 +360,31 @@ def _create_parent_thread_message(conversation_doc, route_doc, settings, inbox_c
 					"text": text,
 					"is_bot_message": 1,
 					"bot": settings.get("bridge_raven_user"),
-					"link_doctype": CONVERSATION_DOCTYPE,
-					"link_document": conversation_doc.name,
+					"hide_link_preview": 1,
 					"json": metadata,
 				}
 			).insert(ignore_permissions=True)
+
+		clean_text = build_parent_thread_starter_html(
+			workspace_id=route_doc.raven_workspace or inbox_channel.workspace,
+			inbox_channel_id=inbox_channel.name,
+			thread_id=parent_message.name,
+			contact_label=contact_label,
+			phone_number=phone,
+		)
+		frappe.db.set_value(
+			RAVEN_MESSAGE_DOCTYPE,
+			parent_message.name,
+			{
+				"text": clean_text,
+				"hide_link_preview": 1,
+				"link_doctype": None,
+				"link_document": None,
+			},
+			update_modified=False,
+		)
+		frappe.clear_document_cache(RAVEN_MESSAGE_DOCTYPE, parent_message.name)
+		return frappe.get_doc(RAVEN_MESSAGE_DOCTYPE, parent_message.name)
 	finally:
 		frappe.flags.whatsapp_raven_bridge_syncing = previous_flag
 

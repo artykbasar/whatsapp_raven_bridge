@@ -1173,25 +1173,12 @@ class TestSetupBootstrapAndServiceUser(IntegrationTestCase):
 		)
 
 	def _cleanup(self):
-		conversation_names = set(
-			frappe.get_all(
-				"WhatsApp Raven Conversation",
-				filters=[["phone_number", "like", "44775533%"]],
-				pluck="name",
-			)
+		conversation_rows = frappe.get_all(
+			"WhatsApp Raven Conversation",
+			filters=[["phone_number", "like", "44775533%"]],
+			fields=["name", "parent_raven_message"],
 		)
-		parent_message_names = set()
-		if conversation_names:
-			parent_message_names = set(
-				frappe.get_all(
-					"Raven Message",
-					filters={
-						"link_doctype": "WhatsApp Raven Conversation",
-						"link_document": ["in", list(conversation_names)],
-					},
-					pluck="name",
-				)
-			)
+		parent_message_names = {row.parent_raven_message for row in conversation_rows if row.parent_raven_message}
 
 		for name in frappe.get_all(
 			"WhatsApp Raven Message Link",
@@ -1208,18 +1195,19 @@ class TestSetupBootstrapAndServiceUser(IntegrationTestCase):
 			frappe.delete_doc("WhatsApp Message", name, force=True)
 
 		for name in frappe.get_all(
-			"Raven Message",
-			filters=[["text", "like", "%warbh%"]],
-			pluck="name",
-		):
-			frappe.delete_doc("Raven Message", name, force=True)
-
-		for name in frappe.get_all(
 			"WhatsApp Raven Conversation",
 			filters=[["phone_number", "like", "44775533%"]],
 			pluck="name",
 		):
 			frappe.delete_doc("WhatsApp Raven Conversation", name, force=True)
+
+		for name in frappe.get_all(
+			"Raven Message",
+			filters=[["text", "like", "%warbh%"]],
+			pluck="name",
+		):
+			if frappe.db.exists("Raven Message", name):
+				frappe.delete_doc("Raven Message", name, force=True)
 
 		for name in frappe.get_all(
 			"WhatsApp Raven Account Route",

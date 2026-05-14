@@ -21,6 +21,7 @@ Current behavior is text-only two-way sync.
    - Message header is a clickable link to `/app/whatsapp-message/<name>`.
    - Incoming headers are highlighted with compact normal line spacing.
    - Individual mirrored chat lines do not render as large WhatsApp document cards.
+   - Account inbox parent/thread starter rows show clickable contact name + phone that open the Raven thread.
 5. Bridge creates one **WhatsApp Raven Message Link** for idempotency.
 
 ## Outbound Flow

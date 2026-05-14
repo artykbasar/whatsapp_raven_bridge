@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timedelta
+from urllib.parse import quote
 
 import frappe
 from frappe.tests import IntegrationTestCase
@@ -15,6 +16,7 @@ from whatsapp_raven_bridge.api.backfill import (
 	enqueue_sync_all_message_history,
 	preview_all_message_history,
 	preview_backfill,
+	reformat_existing_parent_thread_messages as reformat_existing_parent_thread_messages_api,
 	reformat_existing_whatsapp_origin_raven_messages as reformat_existing_whatsapp_origin_raven_messages_api,
 	run_backfill,
 )
@@ -23,6 +25,7 @@ from whatsapp_raven_bridge.bridge.backfill import (
 	_run_backfill_job,
 	_update_scheduled_backfill_state,
 	backfill_whatsapp_messages,
+	reformat_existing_parent_thread_messages,
 	reformat_existing_whatsapp_origin_raven_messages,
 	release_backfill_lock,
 	run_scheduled_backfill_if_due,
@@ -806,8 +809,22 @@ class TestHistoricalBackfill(IntegrationTestCase):
 		)
 		conversation = frappe.get_doc("WhatsApp Raven Conversation", conversation_name)
 		parent_message = frappe.get_doc("Raven Message", conversation.parent_raven_message)
-		self.assertEqual(cstr(parent_message.link_doctype), "WhatsApp Raven Conversation")
-		self.assertEqual(cstr(parent_message.link_document), conversation.name)
+		self.assertFalse(cstr(parent_message.link_doctype))
+		self.assertFalse(cstr(parent_message.link_document))
+		self.assertEqual(int(parent_message.hide_link_preview or 0), 1)
+		route_name = frappe.db.get_value(
+			"WhatsApp Raven Account Route",
+			{"whatsapp_account": self.ACCOUNT_NAME, "enabled": 1},
+			"name",
+		)
+		route = frappe.get_doc("WhatsApp Raven Account Route", route_name)
+		expected_route = (
+			f"/raven/{quote(route.raven_workspace, safe='')}"
+			f"/{quote(route.inbox_channel, safe='')}"
+			f"/thread/{quote(parent_message.name, safe='')}"
+		)
+		self.assertIn(expected_route, cstr(parent_message.text))
+		self.assertIn("447744100001", cstr(parent_message.text))
 
 	def test_x_reformat_skips_human_outgoing_replies_and_is_idempotent(self):
 		conversation_name = frappe.db.get_value(
@@ -868,6 +885,68 @@ class TestHistoricalBackfill(IntegrationTestCase):
 		result = reformat_existing_whatsapp_origin_raven_messages_api()
 		self.assertIn("scanned_links", result)
 		self.assertIn("reformatted", result)
+
+	def test_y1_parent_thread_reformat_api_cleans_old_parent_cards(self):
+		incoming = self._insert_whatsapp_incoming("y10", "parent cleanup")
+		backfill_whatsapp_messages(whatsapp_account=self.ACCOUNT_NAME, dry_run=0, limit=20)
+		conversation_name = frappe.db.get_value(
+			"WhatsApp Raven Conversation",
+			{"whatsapp_account": self.ACCOUNT_NAME, "phone_number": "447744100001"},
+			"name",
+		)
+		conversation = frappe.get_doc("WhatsApp Raven Conversation", conversation_name)
+		parent_message = frappe.get_doc("Raven Message", conversation.parent_raven_message)
+		child_link = frappe.get_doc(
+			"WhatsApp Raven Message Link",
+			frappe.db.get_value("WhatsApp Raven Message Link", {"whatsapp_message": incoming.name}, "name"),
+		)
+		child_message = frappe.get_doc("Raven Message", child_link.raven_message)
+		child_text_before = cstr(child_message.text)
+		parent_creation = get_datetime(parent_message.creation)
+		parent_modified = get_datetime(parent_message.modified)
+
+		frappe.db.set_value(
+			"Raven Message",
+			parent_message.name,
+			{
+				"text": "<p><strong>WhatsApp conversation</strong> <code>447744100001</code></p>",
+				"hide_link_preview": 0,
+				"link_doctype": "WhatsApp Raven Conversation",
+				"link_document": conversation.name,
+			},
+			update_modified=False,
+		)
+
+		first = reformat_existing_parent_thread_messages()
+		second = reformat_existing_parent_thread_messages_api()
+		parent_message.reload()
+
+		self.assertGreaterEqual(int(first.get("reformatted") or 0), 1)
+		self.assertEqual(int(second.get("reformatted") or 0), 0)
+		self.assertFalse(cstr(parent_message.link_doctype))
+		self.assertFalse(cstr(parent_message.link_document))
+		self.assertEqual(int(parent_message.hide_link_preview or 0), 1)
+
+		route_name = frappe.db.get_value(
+			"WhatsApp Raven Account Route",
+			{"whatsapp_account": self.ACCOUNT_NAME, "enabled": 1},
+			"name",
+		)
+		route = frappe.get_doc("WhatsApp Raven Account Route", route_name)
+		expected_route = (
+			f"/raven/{quote(route.raven_workspace, safe='')}"
+			f"/{quote(route.inbox_channel, safe='')}"
+			f"/thread/{quote(parent_message.name, safe='')}"
+		)
+		self.assertIn(expected_route, cstr(parent_message.text))
+		self.assertIn("447744100001", cstr(parent_message.text))
+		self.assertNotIn("WhatsApp Raven Conversation", cstr(parent_message.text))
+		self.assertNotIn("WhatsApp conversation", cstr(parent_message.text))
+		self.assertEqual(get_datetime(parent_message.creation), parent_creation)
+		self.assertEqual(get_datetime(parent_message.modified), parent_modified)
+
+		child_message.reload()
+		self.assertEqual(cstr(child_message.text), child_text_before)
 
 	def test_z_reformat_outgoing_backfilled_uses_known_agent_label(self):
 		outgoing = self._insert_whatsapp_outgoing("z01", "legacy known agent body")
@@ -1192,18 +1271,19 @@ class TestHistoricalBackfill(IntegrationTestCase):
 			frappe.delete_doc("WhatsApp Notification Log", name, force=True)
 
 		for name in frappe.get_all(
-			"Raven Message",
-			filters=[["text", "like", "%warb4h%"]],
-			pluck="name",
-		):
-			frappe.delete_doc("Raven Message", name, force=True)
-
-		for name in frappe.get_all(
 			"WhatsApp Raven Conversation",
 			filters=[["phone_number", "like", "4477441000%"]],
 			pluck="name",
 		):
 			frappe.delete_doc("WhatsApp Raven Conversation", name, force=True)
+
+		for name in frappe.get_all(
+			"Raven Message",
+			filters=[["text", "like", "%warb4h%"]],
+			pluck="name",
+		):
+			if frappe.db.exists("Raven Message", name):
+				frappe.delete_doc("Raven Message", name, force=True)
 
 		for name in frappe.get_all(
 			"Raven Channel",
