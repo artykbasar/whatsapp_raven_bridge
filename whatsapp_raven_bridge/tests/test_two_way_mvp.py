@@ -15,6 +15,7 @@ from whatsapp_raven_bridge.bridge.outbound import (
 	process_outgoing_raven_message,
 )
 from whatsapp_raven_bridge.bridge.raven_destination import ensure_raven_destination
+from whatsapp_raven_bridge.bridge.whatsapp_message_rendering import format_phone_for_display
 
 
 class TestTwoWayMVPHardening(IntegrationTestCase):
@@ -119,7 +120,11 @@ class TestTwoWayMVPHardening(IntegrationTestCase):
 		self.assertFalse(cstr(raven_message.link_document))
 		self.assertEqual(int(raven_message.hide_link_preview or 0), 1)
 		self.assertIn(f'href="/app/whatsapp-message/{incoming.name}"', cstr(raven_message.text))
-		self.assertIn("· WhatsApp", cstr(raven_message.text))
+		self.assertIn("<mark><strong>", cstr(raven_message.text))
+		self.assertIn("WARB4B Profile", cstr(raven_message.text))
+		self.assertNotIn("· WhatsApp", cstr(raven_message.text))
+		self.assertIn("</a></p><p>", cstr(raven_message.text))
+		self.assertNotIn("<p><br></p>", cstr(raven_message.text))
 		self.assertEqual(raven_message.channel_id, channel.name)
 		self.assertEqual(cstr(raven_message.message_type), "Text")
 
@@ -155,7 +160,35 @@ class TestTwoWayMVPHardening(IntegrationTestCase):
 		self.assertTrue(link_name)
 		raven_name = frappe.db.get_value("WhatsApp Raven Message Link", link_name, "raven_message")
 		raven_message = frappe.get_doc("Raven Message", raven_name)
-		self.assertIn(f"<strong>{normalized_phone} · WhatsApp</strong>", cstr(raven_message.text))
+		self.assertIn(
+			f"<mark><strong>{format_phone_for_display(normalized_phone)}</strong></mark>",
+			cstr(raven_message.text),
+		)
+		self.assertNotIn("· WhatsApp", cstr(raven_message.text))
+		self.assertIn("</a></p><p>", cstr(raven_message.text))
+		self.assertNotIn("<p><br></p>", cstr(raven_message.text))
+
+	def test_01c_incoming_multiline_preserves_line_breaks(self):
+		phone = self._phone("16")
+		payload = {
+			"doctype": "WhatsApp Message",
+			"type": "Incoming",
+			"content_type": "text",
+			"message_type": "Manual",
+			"from": phone,
+			"profile_name": "Manual Sync Tester",
+			"message": "line one\nline two",
+			"message_id": self._message_id("16"),
+			"whatsapp_account": self.ACCOUNT_NAME,
+		}
+		incoming = frappe.get_doc(payload).insert(ignore_permissions=True)
+		link_name = frappe.db.get_value("WhatsApp Raven Message Link", {"whatsapp_message": incoming.name}, "name")
+		self.assertTrue(link_name)
+		raven_name = frappe.db.get_value("WhatsApp Raven Message Link", link_name, "raven_message")
+		raven_message = frappe.get_doc("Raven Message", raven_name)
+		self.assertIn("<mark><strong>Manual Sync Tester</strong></mark>", cstr(raven_message.text))
+		self.assertIn("</a></p><p>line one</p><p>line two</p>", cstr(raven_message.text))
+		self.assertNotIn("<p><br></p>", cstr(raven_message.text))
 
 	def test_02_reprocessing_same_whatsapp_message_is_idempotent(self):
 		message_id = self._message_id("02")

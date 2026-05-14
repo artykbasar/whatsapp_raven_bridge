@@ -14,6 +14,7 @@ from whatsapp_raven_bridge.bridge.account_route import (
 	get_or_create_inbox_channel,
 	get_route_for_whatsapp_account,
 )
+from whatsapp_raven_bridge.bridge.whatsapp_message_rendering import build_parent_thread_starter_html
 from whatsapp_raven_bridge.utils.settings import bridge_user_context, get_settings
 
 CONVERSATION_DOCTYPE = "WhatsApp Raven Conversation"
@@ -54,6 +55,7 @@ def get_default_channel_members(settings=None):
 def ensure_raven_destination(conversation):
 	"""Create or reuse a Raven Channel for the given WhatsApp Raven Conversation."""
 	conversation_doc = _get_conversation_doc(conversation)
+	_clear_stale_conversation_links(conversation_doc)
 
 	settings = get_settings()
 	if not settings or not cint(settings.get("enabled")):
@@ -81,6 +83,27 @@ def ensure_raven_destination(conversation):
 		frappe.throw(_("Default Channel Type is required in WhatsApp Raven Bridge Settings."))
 
 	return _ensure_global_channel_per_contact_destination(conversation_doc, settings)
+
+
+def _clear_stale_conversation_links(conversation_doc) -> None:
+	"""Clear stale link fields on conversation rows so repairs can proceed safely."""
+	link_map = {
+		"account_route": "WhatsApp Raven Account Route",
+		"raven_channel": RAVEN_CHANNEL_DOCTYPE,
+		"parent_raven_message": RAVEN_MESSAGE_DOCTYPE,
+		"last_raven_message": RAVEN_MESSAGE_DOCTYPE,
+		"last_inbound_whatsapp_message": "WhatsApp Message",
+		"last_outbound_whatsapp_message": "WhatsApp Message",
+	}
+	updates = {}
+	for fieldname, doctype in link_map.items():
+		value = cstr(conversation_doc.get(fieldname) or "").strip()
+		if value and not frappe.db.exists(doctype, value):
+			updates[fieldname] = None
+			conversation_doc.set(fieldname, None)
+	if updates:
+		frappe.db.set_value(CONVERSATION_DOCTYPE, conversation_doc.name, updates, update_modified=False)
+		frappe.clear_document_cache(CONVERSATION_DOCTYPE, conversation_doc.name)
 
 
 def _ensure_route_destination(conversation_doc, route, settings):
@@ -141,12 +164,22 @@ def ensure_thread_destination(conversation, route, settings=None):
 
 	parent_message = _get_existing_parent_thread_message(conversation_doc)
 	thread_channel = _get_existing_thread_channel(conversation_doc, parent_message)
+	stale_parent_reference = bool(cstr(conversation_doc.parent_raven_message or "").strip() and not parent_message)
+	orphan_thread_channel = None
+	if stale_parent_reference and thread_channel:
+		# The stored parent message is missing while the old thread channel still exists.
+		# Force creation of a new canonical parent/thread pair, then migrate thread messages.
+		orphan_thread_channel = thread_channel
+		thread_channel = None
 
 	if not parent_message:
 		parent_message = _create_parent_thread_message(conversation_doc, route_doc, settings, inbox_channel)
 
 	if not thread_channel:
 		thread_channel = _create_or_get_thread_channel(parent_message, inbox_channel)
+
+	if orphan_thread_channel and thread_channel and orphan_thread_channel.name != thread_channel.name:
+		_migrate_thread_channel(orphan_thread_channel.name, thread_channel.name)
 
 	if not cint(parent_message.is_thread):
 		frappe.db.set_value(
@@ -168,6 +201,39 @@ def ensure_thread_destination(conversation, route, settings=None):
 
 	ensure_thread_memberships(thread_channel, route_doc, settings=settings)
 	return thread_channel
+
+
+def _migrate_thread_channel(old_channel_id: str, new_channel_id: str) -> None:
+	"""Move existing thread messages/links from a stale thread channel to canonical channel."""
+	old_id = cstr(old_channel_id or "").strip()
+	new_id = cstr(new_channel_id or "").strip()
+	if not old_id or not new_id or old_id == new_id:
+		return
+	if not frappe.db.exists(RAVEN_CHANNEL_DOCTYPE, old_id):
+		return
+	if not frappe.db.exists(RAVEN_CHANNEL_DOCTYPE, new_id):
+		return
+	if not cint(frappe.db.get_value(RAVEN_CHANNEL_DOCTYPE, old_id, "is_thread")):
+		return
+
+	frappe.db.sql(
+		"""
+		update `tabRaven Message`
+		set channel_id=%s
+		where channel_id=%s and name!=%s
+		""",
+		(new_id, old_id, old_id),
+	)
+	frappe.db.sql(
+		"""
+		update `tabWhatsApp Raven Message Link`
+		set raven_channel=%s
+		where raven_channel=%s
+		""",
+		(new_id, old_id),
+	)
+	frappe.clear_document_cache(RAVEN_CHANNEL_DOCTYPE, old_id)
+	frappe.clear_document_cache(RAVEN_CHANNEL_DOCTYPE, new_id)
 
 
 def ensure_thread_memberships(thread_channel, route, settings=None):
@@ -335,8 +401,9 @@ def _get_existing_thread_channel(conversation_doc, parent_message=None):
 
 
 def _create_parent_thread_message(conversation_doc, route_doc, settings, inbox_channel):
-	phone = escape_html(cstr(conversation_doc.phone_number or "unknown"))
-	text = f"<p><strong>WhatsApp conversation</strong> <code>{phone}</code></p>"
+	phone = cstr(conversation_doc.phone_number or "").strip()
+	contact_label = cstr(conversation_doc.display_name or "").strip() or phone or "Unknown WhatsApp Contact"
+	text = f"<p><strong>{escape_html(contact_label)}</strong></p><p>{escape_html(phone or 'Unknown')}</p>"
 	metadata = {
 		"source": "whatsapp_raven_bridge",
 		"purpose": "thread_parent",
@@ -350,7 +417,7 @@ def _create_parent_thread_message(conversation_doc, route_doc, settings, inbox_c
 	try:
 		frappe.flags.whatsapp_raven_bridge_syncing = True
 		with bridge_user_context():
-			return frappe.get_doc(
+			parent_message = frappe.get_doc(
 				{
 					"doctype": RAVEN_MESSAGE_DOCTYPE,
 					"channel_id": inbox_channel.name,
@@ -358,11 +425,31 @@ def _create_parent_thread_message(conversation_doc, route_doc, settings, inbox_c
 					"text": text,
 					"is_bot_message": 1,
 					"bot": settings.get("bridge_raven_user"),
-					"link_doctype": CONVERSATION_DOCTYPE,
-					"link_document": conversation_doc.name,
+					"hide_link_preview": 1,
 					"json": metadata,
 				}
 			).insert(ignore_permissions=True)
+
+		clean_text = build_parent_thread_starter_html(
+			workspace_id=route_doc.raven_workspace or inbox_channel.workspace,
+			inbox_channel_id=inbox_channel.name,
+			thread_id=parent_message.name,
+			contact_label=contact_label,
+			phone_number=phone,
+		)
+		frappe.db.set_value(
+			RAVEN_MESSAGE_DOCTYPE,
+			parent_message.name,
+			{
+				"text": clean_text,
+				"hide_link_preview": 1,
+				"link_doctype": None,
+				"link_document": None,
+			},
+			update_modified=False,
+		)
+		frappe.clear_document_cache(RAVEN_MESSAGE_DOCTYPE, parent_message.name)
+		return frappe.get_doc(RAVEN_MESSAGE_DOCTYPE, parent_message.name)
 	finally:
 		frappe.flags.whatsapp_raven_bridge_syncing = previous_flag
 

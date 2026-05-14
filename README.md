@@ -74,7 +74,7 @@ You can bootstrap most bridge records after at least one WhatsApp Account exists
 frappe.call(
 	"whatsapp_raven_bridge.api.setup.bootstrap_whatsapp_raven_bridge",
 	workspace_name="WhatsApp Support",
-	bridge_bot_name="WhatsApp Bridge Bot",
+	bridge_bot_name="WhatsApp",
 	bridge_system_user="whatsapp-bridge-service@example.com",
 	whatsapp_accounts=["My WhatsApp Account"],
 	route_members=[{"raven_user": "Administrator", "is_admin": 1, "can_reply": 1}],
@@ -97,6 +97,8 @@ Bootstrap does not configure Meta webhook URLs, WhatsApp tokens, or template app
 - Inbound WhatsApp text to Raven
 - Outbound Raven text to WhatsApp
 - Compact WhatsApp-origin Raven message layout with clickable WhatsApp source header
+  - Incoming headers are highlighted for quick visual scan
+  - Outgoing imported/backfilled headers show the best available agent name
 - Historical WhatsApp-to-Raven text backfill with preserved message timestamps
 - One-click backfill preview and full-history sync queue on Bridge Settings
 - Scheduled missed-message reconciliation (lookback + limit based)
@@ -120,8 +122,15 @@ Bootstrap does not configure Meta webhook URLs, WhatsApp tokens, or template app
 
 For WhatsApp-origin mirrored/imported messages, the bridge keeps source mapping in
 **WhatsApp Raven Message Link** and renders a compact clickable header in Raven.
+Incoming headers are highlighted; outgoing imported/backfilled headers are not.
 It does not attach each chat line as a visible WhatsApp Message document card.
-Parent thread/inbox conversation cards remain unchanged.
+Thread starter rows in account inbox now render as highlighted contact labels plus
+code-formatted phone identifiers with leading `+`
+instead of large `WhatsApp Raven Conversation` document cards.
+Parent starters intentionally avoid custom links and rely on Raven’s built-in **View Thread** action.
+
+Recommended bot display name is `WhatsApp`; Raven adds its own bot badge in UI.
+Legacy default bot label `WhatsApp Bridge Bot` is repaired to `WhatsApp` by setup/migrate repair helpers when safe.
 
 ## Documentation
 
@@ -129,6 +138,7 @@ Parent thread/inbox conversation cards remain unchanged.
 - Configuration: [docs/CONFIGURATION.md](docs/CONFIGURATION.md)
 - Usage: [docs/USAGE.md](docs/USAGE.md)
 - Troubleshooting: [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
+- Development: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)
 
 ## Backfill (CLI)
 

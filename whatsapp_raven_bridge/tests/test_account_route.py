@@ -12,6 +12,7 @@ from whatsapp_raven_bridge.bridge.account_route import (
 from whatsapp_raven_bridge.bridge.conversation import get_or_create_conversation, normalize_phone_number
 from whatsapp_raven_bridge.bridge.outbound import process_outgoing_raven_message
 from whatsapp_raven_bridge.bridge.raven_destination import ensure_raven_destination
+from whatsapp_raven_bridge.bridge.whatsapp_message_rendering import format_phone_for_display
 
 
 class TestAccountRouteDesign(IntegrationTestCase):
@@ -174,10 +175,23 @@ class TestAccountRouteDesign(IntegrationTestCase):
 
 		parent_message = frappe.get_doc("Raven Message", conversation.parent_raven_message)
 		self.assertEqual(parent_message.channel_id, route.inbox_channel)
-		self.assertEqual(parent_message.link_doctype, "WhatsApp Raven Conversation")
-		self.assertEqual(parent_message.link_document, conversation.name)
+		self.assertFalse(parent_message.link_doctype)
+		self.assertFalse(parent_message.link_document)
+		self.assertEqual(int(parent_message.hide_link_preview or 0), 1)
 		self.assertTrue(parent_message.is_thread)
 		self.assertTrue(parent_message.is_bot_message)
+		self.assertNotIn("href=", parent_message.text)
+		self.assertNotIn("/raven/", parent_message.text)
+		self.assertNotIn("/thread/", parent_message.text)
+		self.assertNotIn("target=", parent_message.text)
+		self.assertNotIn("onclick=", parent_message.text)
+		self.assertNotIn("style=", parent_message.text)
+		self.assertIn("<mark><strong>", parent_message.text)
+		self.assertIn("<code>", parent_message.text)
+		self.assertIn(format_phone_for_display(phone_norm), parent_message.text)
+		self.assertNotIn("WhatsApp Raven Conversation", parent_message.text)
+		self.assertNotIn("WhatsApp conversation", parent_message.text)
+		self.assertNotIn(conversation.name, parent_message.text)
 
 		thread_channel = frappe.get_doc("Raven Channel", conversation.raven_channel)
 		self.assertTrue(thread_channel.is_thread)
@@ -223,13 +237,7 @@ class TestAccountRouteDesign(IntegrationTestCase):
 
 		self.assertEqual(conversation.parent_raven_message, first_parent)
 		self.assertEqual(conversation.raven_channel, first_thread)
-		self.assertEqual(
-			frappe.db.count(
-				"Raven Message",
-				{"link_doctype": "WhatsApp Raven Conversation", "link_document": conversation.name},
-			),
-			1,
-		)
+		self.assertEqual(frappe.db.count("Raven Message", {"name": conversation.parent_raven_message}), 1)
 		self.assertEqual(
 			frappe.db.count("Raven Channel", {"name": conversation.raven_channel, "is_thread": 1}),
 			1,
@@ -598,25 +606,13 @@ class TestAccountRouteDesign(IntegrationTestCase):
 		).insert(ignore_permissions=True)
 
 	def _cleanup(self):
-		conversation_names = set(
-			frappe.get_all(
-				"WhatsApp Raven Conversation",
-				filters=[["phone_number", "like", "44773311%"]],
-				pluck="name",
-			)
+		conversation_rows = frappe.get_all(
+			"WhatsApp Raven Conversation",
+			filters=[["phone_number", "like", "44773311%"]],
+			fields=["name", "parent_raven_message"],
 		)
-		parent_messages = set()
-		if conversation_names:
-			parent_messages = set(
-				frappe.get_all(
-					"Raven Message",
-					filters={
-						"link_doctype": "WhatsApp Raven Conversation",
-						"link_document": ["in", list(conversation_names)],
-					},
-					pluck="name",
-				)
-			)
+		conversation_names = {row.name for row in conversation_rows}
+		parent_messages = {row.parent_raven_message for row in conversation_rows if row.parent_raven_message}
 
 		for name in frappe.get_all(
 			"WhatsApp Raven Message Link",
@@ -633,15 +629,6 @@ class TestAccountRouteDesign(IntegrationTestCase):
 			frappe.delete_doc("WhatsApp Message", name, force=True)
 
 		for name in frappe.get_all(
-			"Raven Message",
-			filters=[
-				["text", "like", "%warc4c%"],
-			],
-			pluck="name",
-		):
-			frappe.delete_doc("Raven Message", name, force=True)
-
-		for name in frappe.get_all(
 			"WhatsApp Raven Conversation",
 			filters=[["phone_number", "like", "44773311%"]],
 			pluck="name",
@@ -649,6 +636,16 @@ class TestAccountRouteDesign(IntegrationTestCase):
 			frappe.delete_doc("WhatsApp Raven Conversation", name, force=True)
 
 		for name in parent_messages:
+			if frappe.db.exists("Raven Message", name):
+				frappe.delete_doc("Raven Message", name, force=True)
+
+		for name in frappe.get_all(
+			"Raven Message",
+			filters=[
+				["text", "like", "%warc4c%"],
+			],
+			pluck="name",
+		):
 			if frappe.db.exists("Raven Message", name):
 				frappe.delete_doc("Raven Message", name, force=True)
 

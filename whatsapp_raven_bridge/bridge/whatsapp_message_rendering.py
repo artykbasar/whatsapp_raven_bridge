@@ -4,7 +4,17 @@ from __future__ import annotations
 
 from urllib.parse import quote
 
+import frappe
 from frappe.utils import cstr, escape_html
+
+from whatsapp_raven_bridge.utils.settings import get_bridge_system_user
+
+try:
+	import phonenumbers
+	from phonenumbers import PhoneNumberFormat
+except Exception:  # pragma: no cover - optional dependency
+	phonenumbers = None
+	PhoneNumberFormat = None
 
 
 def desk_whatsapp_message_route(whatsapp_message_name: str) -> str:
@@ -12,16 +22,42 @@ def desk_whatsapp_message_route(whatsapp_message_name: str) -> str:
 	return f"/app/whatsapp-message/{quote(cstr(whatsapp_message_name or '').strip(), safe='')}"
 
 
+def build_parent_thread_starter_html(
+	*,
+	workspace_id: str,
+	inbox_channel_id: str,
+	thread_id: str,
+	contact_label: str,
+	phone_number: str | None,
+) -> str:
+	"""Render plain parent thread-starter text (no custom thread links)."""
+	# Keep params for API stability at call sites while intentionally not using them.
+	_ = workspace_id, inbox_channel_id, thread_id
+	label = cstr(contact_label or "").strip() or "Unknown WhatsApp Contact"
+	phone = format_phone_for_display(phone_number)
+	lines = [f"<p><mark><strong>{escape_html(label)}</strong></mark></p>"]
+	if phone:
+		lines.append(f"<p><code>{escape_html(phone)}</code></p>")
+	return "".join(lines)
+
+
 def build_whatsapp_origin_message_html(
 	*,
 	whatsapp_message_name: str,
 	header_label: str,
 	body_text: str | None,
+	highlight_header: bool = False,
 ) -> str:
 	"""Build compact Raven HTML with clickable WhatsApp source header and message body."""
 	source_route = desk_whatsapp_message_route(whatsapp_message_name)
 	label = cstr(header_label or "").strip() or "Unknown WhatsApp Contact"
-	header = f'<p><a href="{escape_html(source_route)}"><strong>{escape_html(label)} · WhatsApp</strong></a></p>'
+	header_text = f"<strong>{escape_html(label)}</strong>"
+	if highlight_header:
+		header_text = f"<mark>{header_text}</mark>"
+	header_anchor = f'<a href="{escape_html(source_route)}">{header_text}</a>'
+	if highlight_header:
+		return f"<p>{header_anchor}</p>{_render_body_html(body_text)}"
+	header = f"<p>{header_anchor}</p>"
 	body = _render_body_html(body_text)
 	return f"{header}{body}"
 
@@ -32,7 +68,7 @@ def build_whatsapp_origin_message_content(header_label: str, body_text: str | No
 	body = cstr(body_text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
 	if not body:
 		body = "Empty WhatsApp text message"
-	return f"{label} · WhatsApp\n{body}"
+	return f"{label}\n{body}"
 
 
 def incoming_header_label(profile_name: str | None, normalized_phone: str | None) -> str:
@@ -40,10 +76,31 @@ def incoming_header_label(profile_name: str | None, normalized_phone: str | None
 	name = cstr(profile_name or "").strip()
 	if name:
 		return name
-	phone = cstr(normalized_phone or "").strip()
+	phone = format_phone_for_display(normalized_phone)
 	if phone:
 		return phone
 	return "Unknown WhatsApp Contact"
+
+
+def format_phone_for_display(phone_number: str | None) -> str:
+	"""Return a safe display phone with leading + and international formatting when possible."""
+	raw = cstr(phone_number or "").strip()
+	if not raw:
+		return ""
+
+	digits = "".join(ch for ch in raw if ch.isdigit())
+	if not digits:
+		return ""
+
+	candidate = raw if raw.startswith("+") else f"+{digits}"
+	if phonenumbers and candidate.startswith("+"):
+		try:
+			parsed = phonenumbers.parse(candidate, None)
+			return phonenumbers.format_number(parsed, PhoneNumberFormat.INTERNATIONAL)
+		except Exception:
+			pass
+
+	return f"+{digits}"
 
 
 def outgoing_import_header_label() -> str:
@@ -51,8 +108,62 @@ def outgoing_import_header_label() -> str:
 	return "Agent"
 
 
+def get_outgoing_whatsapp_agent_label(whatsapp_doc, link=None, raven_message=None) -> str:
+	"""Resolve the best available agent label for an outgoing WhatsApp-origin message."""
+	bridge_system_user = cstr(get_bridge_system_user() or "").strip()
+
+	linked_raven_name = cstr((link or {}).get("raven_message") or "").strip()
+	if raven_message and not hasattr(raven_message, "get"):
+		raven_message = None
+	if not raven_message and linked_raven_name and frappe.db.exists("Raven Message", linked_raven_name):
+		raven_message = frappe.get_doc("Raven Message", linked_raven_name)
+
+	if raven_message:
+		if (
+			not int(raven_message.get("is_bot_message") or 0)
+			and not _is_excluded_actor(raven_message.get("owner"), bridge_system_user)
+		):
+			name = _resolve_user_label(raven_message.get("owner"))
+			if name:
+				return name
+
+	for fieldname in ("owner", "modified_by"):
+		candidate = cstr(whatsapp_doc.get(fieldname) if hasattr(whatsapp_doc, "get") else "").strip()
+		if _is_excluded_actor(candidate, bridge_system_user):
+			continue
+		name = _resolve_user_label(candidate)
+		if name:
+			return name
+
+	return outgoing_import_header_label()
+
+
+def _is_excluded_actor(user_id: str | None, bridge_system_user: str | None) -> bool:
+	value = cstr(user_id or "").strip()
+	if not value:
+		return True
+	if value == "Guest":
+		return True
+	if bridge_system_user and value == bridge_system_user:
+		return True
+	return False
+
+
+def _resolve_user_label(user_id: str | None) -> str | None:
+	value = cstr(user_id or "").strip()
+	if not value:
+		return None
+	if not frappe.db.exists("User", value):
+		return None
+	row = frappe.db.get_value("User", value, ["full_name", "first_name", "name"], as_dict=True) or {}
+	return cstr(row.get("full_name") or row.get("first_name") or row.get("name") or value).strip() or None
+
+
 def _render_body_html(body_text: str | None) -> str:
 	body = cstr(body_text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
 	if not body:
 		return "<p><em>Empty WhatsApp text message</em></p>"
-	return f"<p>{escape_html(body).replace(chr(10), '<br>')}</p>"
+	lines = [escape_html(line) for line in body.split("\n")]
+	if len(lines) == 1:
+		return f"<p>{lines[0]}</p>"
+	return "".join(f"<p>{line or '&nbsp;'}</p>" for line in lines)

@@ -50,7 +50,7 @@ CLI example:
 frappe.call(
 	"whatsapp_raven_bridge.api.setup.bootstrap_whatsapp_raven_bridge",
 	workspace_name="WhatsApp Support",
-	bridge_bot_name="WhatsApp Bridge Bot",
+	bridge_bot_name="WhatsApp",
 	bridge_system_user="whatsapp-bridge-service@example.com",
 	whatsapp_accounts=["<whatsapp-account-name>"],
 	route_members=[{"raven_user": "Administrator", "is_admin": 1, "can_reply": 1}],

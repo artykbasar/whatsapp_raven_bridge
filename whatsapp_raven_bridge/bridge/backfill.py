@@ -22,8 +22,9 @@ from whatsapp_raven_bridge.bridge.raven_destination import ensure_raven_destinat
 from whatsapp_raven_bridge.bridge.whatsapp_message_rendering import (
 	build_whatsapp_origin_message_content,
 	build_whatsapp_origin_message_html,
+	build_parent_thread_starter_html,
+	get_outgoing_whatsapp_agent_label,
 	incoming_header_label,
-	outgoing_import_header_label,
 )
 from whatsapp_raven_bridge.utils.settings import get_settings
 
@@ -481,17 +482,19 @@ def refresh_thread_last_message_state(channel_id: str) -> None:
 
 def build_backfill_raven_text(doc, normalized_phone: str, body_text: str) -> str:
 	"""Build safe Raven HTML text for imported historical WhatsApp message."""
+	is_incoming = cstr(doc.get("type")) == "Incoming"
 	return build_whatsapp_origin_message_html(
 		whatsapp_message_name=doc.name,
 		header_label=_get_backfill_header_label(doc, normalized_phone),
 		body_text=body_text,
+		highlight_header=is_incoming,
 	)
 
 
-def _get_backfill_header_label(doc, normalized_phone: str) -> str:
+def _get_backfill_header_label(doc, normalized_phone: str, link=None, raven_message=None) -> str:
 	if cstr(doc.get("type")) == "Incoming":
 		return incoming_header_label(doc.get("profile_name"), normalized_phone)
-	return outgoing_import_header_label()
+	return get_outgoing_whatsapp_agent_label(doc, link=link, raven_message=raven_message)
 
 
 def _extract_whatsapp_body_text(doc) -> str:
@@ -755,11 +758,17 @@ def reformat_existing_whatsapp_origin_raven_messages() -> frappe._dict:
 
 			normalized_phone = normalize_phone_number(whatsapp_message.get("from") or whatsapp_message.get("to"))
 			body_text = _extract_whatsapp_body_text(whatsapp_message)
-			header_label = _get_backfill_header_label(whatsapp_message, normalized_phone)
+			header_label = _get_backfill_header_label(
+				whatsapp_message,
+				normalized_phone,
+				link=link,
+				raven_message=raven_message,
+			)
 			new_text = build_whatsapp_origin_message_html(
 				whatsapp_message_name=whatsapp_message.name,
 				header_label=header_label,
 				body_text=body_text,
+				highlight_header=cstr(whatsapp_message.get("type")) == "Incoming",
 			)
 			new_content = build_whatsapp_origin_message_content(header_label, body_text)
 			if _already_compact_whatsapp_origin_message(raven_message, new_text, new_content):
@@ -794,6 +803,169 @@ def reformat_existing_whatsapp_origin_raven_messages() -> frappe._dict:
 		refresh_thread_last_message_state(channel_id)
 
 	return summary
+
+
+def reformat_existing_parent_thread_messages() -> frappe._dict:
+	"""Rewrite old parent thread-starter rows into plain contact+phone format."""
+	summary = frappe._dict(
+		{
+			"scanned_conversations": 0,
+			"reformatted": 0,
+			"repaired_missing_parent": 0,
+			"skipped_missing_parent_message": 0,
+			"skipped_not_thread_route": 0,
+			"skipped_unrelated": 0,
+			"errors": [],
+		}
+	)
+	touched_channels = set()
+	conversations = frappe.get_all(
+		"WhatsApp Raven Conversation",
+		filters=[["parent_raven_message", "is", "set"]],
+		fields=["name", "phone_number", "display_name", "parent_raven_message", "account_route", "raven_channel"],
+	)
+	summary.scanned_conversations = len(conversations)
+
+	for row in conversations:
+		try:
+			parent_name = cstr(row.get("parent_raven_message") or "").strip()
+			if not parent_name or not frappe.db.exists("Raven Message", parent_name):
+				repair_status = _repair_missing_parent_thread_message(row)
+				if repair_status == "repaired":
+					summary.repaired_missing_parent += 1
+					summary.reformatted += 1
+				else:
+					summary.skipped_missing_parent_message += 1
+				continue
+
+			parent_message = frappe.get_doc("Raven Message", parent_name)
+			metadata = _as_dict(parent_message.get("json"))
+			if cstr(metadata.get("purpose") or "").strip().lower() != "thread_parent" and not cint(parent_message.get("is_thread")):
+				summary.skipped_not_thread_route += 1
+				continue
+
+			inbox_channel_name = cstr(parent_message.get("channel_id") or "").strip()
+			if not inbox_channel_name or not frappe.db.exists("Raven Channel", inbox_channel_name):
+				summary.skipped_missing_parent_message += 1
+				continue
+			inbox_channel = frappe.get_doc("Raven Channel", inbox_channel_name)
+			workspace_id = cstr(inbox_channel.get("workspace") or "").strip()
+			if not workspace_id:
+				summary.skipped_unrelated += 1
+				continue
+			thread_channel_name = cstr(row.get("raven_channel") or "").strip()
+			if not thread_channel_name or not frappe.db.exists("Raven Channel", thread_channel_name):
+				summary.skipped_not_thread_route += 1
+				continue
+			if not cint(frappe.db.get_value("Raven Channel", thread_channel_name, "is_thread")):
+				summary.skipped_not_thread_route += 1
+				continue
+			if cstr(parent_message.get("channel_id") or "").strip() == thread_channel_name:
+				# This is a thread message, not an inbox parent starter.
+				summary.skipped_not_thread_route += 1
+				continue
+
+			route_inbox = _get_route_inbox_channel(cstr(row.get("account_route") or "").strip())
+			if route_inbox and route_inbox != inbox_channel_name:
+				summary.skipped_unrelated += 1
+				continue
+
+			contact_label = cstr(row.get("display_name") or "").strip() or cstr(row.get("phone_number") or "").strip() or "Unknown WhatsApp Contact"
+			phone = cstr(row.get("phone_number") or "").strip()
+			new_text = build_parent_thread_starter_html(
+				workspace_id=workspace_id,
+				inbox_channel_id=inbox_channel_name,
+				thread_id=parent_name,
+				contact_label=contact_label,
+				phone_number=phone,
+			)
+
+			if (
+				cstr(parent_message.get("text") or "") == cstr(new_text)
+				and not cstr(parent_message.get("link_doctype") or "").strip()
+				and not cstr(parent_message.get("link_document") or "").strip()
+				and cint(parent_message.get("hide_link_preview") or 0) == 1
+			):
+				summary.skipped_unrelated += 1
+				continue
+
+			frappe.db.set_value(
+				"Raven Message",
+				parent_name,
+				{
+					"text": new_text,
+					"hide_link_preview": 1,
+					"link_doctype": None,
+					"link_document": None,
+				},
+				update_modified=False,
+			)
+			frappe.clear_document_cache("Raven Message", parent_name)
+			touched_channels.add(inbox_channel_name)
+			summary.reformatted += 1
+		except Exception:
+			summary.errors.append(
+				{
+					"conversation": cstr(row.get("name") or "").strip(),
+					"parent_raven_message": cstr(row.get("parent_raven_message") or "").strip(),
+					"error": frappe.get_traceback(),
+				}
+			)
+
+	for channel_id in sorted(touched_channels):
+		refresh_thread_last_message_state(channel_id)
+
+	return summary
+
+
+def _repair_missing_parent_thread_message(conversation_row: frappe._dict) -> str:
+	"""Repair stale conversation rows where parent message is missing but thread channel still exists."""
+	conversation_name = cstr(conversation_row.get("name") or "").strip()
+	if not conversation_name or not frappe.db.exists("WhatsApp Raven Conversation", conversation_name):
+		return "skipped"
+	thread_channel_name = cstr(conversation_row.get("raven_channel") or "").strip()
+	if not thread_channel_name or not frappe.db.exists("Raven Channel", thread_channel_name):
+		return "skipped"
+	if not cint(frappe.db.get_value("Raven Channel", thread_channel_name, "is_thread")):
+		return "skipped"
+
+	conversation = frappe.get_doc("WhatsApp Raven Conversation", conversation_name)
+	old_thread_channel = cstr(conversation.raven_channel or "").strip()
+	frappe.db.set_value(
+		"WhatsApp Raven Conversation",
+		conversation.name,
+		{
+			"parent_raven_message": None,
+			"raven_channel": None,
+		},
+		update_modified=False,
+	)
+	frappe.clear_document_cache("WhatsApp Raven Conversation", conversation.name)
+	conversation.reload()
+
+	ensure_raven_destination(conversation)
+	conversation.reload()
+	new_thread_channel = cstr(conversation.raven_channel or "").strip()
+	if old_thread_channel and new_thread_channel and old_thread_channel != new_thread_channel:
+		frappe.db.sql(
+			"""
+			update `tabRaven Message`
+			set channel_id=%s
+			where channel_id=%s and name!=%s
+			""",
+			(new_thread_channel, old_thread_channel, old_thread_channel),
+		)
+		frappe.db.sql(
+			"""
+			update `tabWhatsApp Raven Message Link`
+			set raven_channel=%s
+			where raven_channel=%s
+			""",
+			(new_thread_channel, old_thread_channel),
+		)
+		refresh_thread_last_message_state(new_thread_channel)
+		refresh_thread_last_message_state(old_thread_channel)
+	return "repaired"
 
 
 def _is_rewritable_whatsapp_origin_row(link, raven_message) -> bool:

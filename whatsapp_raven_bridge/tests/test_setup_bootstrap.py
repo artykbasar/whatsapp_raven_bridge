@@ -8,16 +8,20 @@ from frappe.utils.password import set_encrypted_password
 
 import whatsapp_raven_bridge.api.setup as setup_api
 from whatsapp_raven_bridge.api.setup import (
+	DEFAULT_BRIDGE_BOT_NAME,
 	DEFAULT_BRIDGE_SYSTEM_USER_EMAIL,
+	LEGACY_DEFAULT_BRIDGE_BOT_NAME,
 	bootstrap_all_accounts_from_settings,
 	bootstrap_from_settings_dialog,
 	bootstrap_whatsapp_raven_bridge,
 	ensure_default_bridge_system_user,
 	get_setup_status,
+	repair_default_bridge_bot_name,
 	repair_bridge_system_user,
 )
 from whatsapp_raven_bridge.patches.fix_stale_bridge_system_user import execute as patch_fix_stale_bridge_system_user
 from whatsapp_raven_bridge.patches.fix_stale_bridge_system_user_v2 import execute as patch_fix_stale_bridge_system_user_v2
+from whatsapp_raven_bridge.patches.rename_default_bridge_bot import execute as patch_rename_default_bridge_bot
 from whatsapp_raven_bridge.bridge.conversation import normalize_phone_number
 from whatsapp_raven_bridge.bridge.raven_destination import ensure_raven_destination
 from whatsapp_raven_bridge.utils.settings import bridge_user_context
@@ -410,13 +414,13 @@ class TestSetupBootstrapAndServiceUser(IntegrationTestCase):
 			result = bootstrap_all_accounts_from_settings()
 			self.assertTrue(result.get("settings_updated"))
 			self.assertEqual(result.get("workspace"), expected_workspace)
-			self.assertEqual(result.get("bot"), "WhatsApp Bridge Bot")
+			self.assertEqual(result.get("bot"), DEFAULT_BRIDGE_BOT_NAME)
 			self.assertEqual(int(result.get("account_count") or 0), len(target_accounts))
 			self.assertGreaterEqual(len(result.get("routes") or []), len(target_accounts))
 
 			settings.reload()
 			self.assertEqual(cstr(settings.default_raven_workspace), expected_workspace)
-			self.assertEqual(cstr(settings.bridge_raven_bot), "WhatsApp Bridge Bot")
+			self.assertEqual(cstr(settings.bridge_raven_bot), DEFAULT_BRIDGE_BOT_NAME)
 			self.assertEqual(cstr(settings.default_channel_type), "Private")
 			self.assertEqual(cstr(settings.conversation_strategy), "Thread Per Contact")
 			self.assertEqual(int(settings.enable_outbound_replies), 1)
@@ -445,6 +449,88 @@ class TestSetupBootstrapAndServiceUser(IntegrationTestCase):
 				)
 		finally:
 			setup_api._get_all_whatsapp_accounts = original_get_all_accounts
+
+	def test_default_bot_repair_renames_legacy_default_when_configured(self):
+		if not frappe.db.exists("Raven Bot", LEGACY_DEFAULT_BRIDGE_BOT_NAME):
+			frappe.get_doc(
+				{
+					"doctype": "Raven Bot",
+					"bot_name": LEGACY_DEFAULT_BRIDGE_BOT_NAME,
+					"is_ai_bot": 0,
+				}
+			).insert(ignore_permissions=True)
+		legacy_bot = frappe.get_doc("Raven Bot", LEGACY_DEFAULT_BRIDGE_BOT_NAME)
+		settings = frappe.get_single("WhatsApp Raven Bridge Settings")
+		settings.bridge_raven_bot = LEGACY_DEFAULT_BRIDGE_BOT_NAME
+		settings.bridge_raven_user = legacy_bot.raven_user
+		settings.save(ignore_permissions=True)
+		frappe.db.commit()
+
+		result = repair_default_bridge_bot_name()
+		self.assertTrue(bool(result.get("attempted")))
+		self.assertTrue(bool(result.get("repaired")))
+
+		settings.reload()
+		legacy_bot.reload()
+		self.assertEqual(cstr(settings.bridge_raven_bot), DEFAULT_BRIDGE_BOT_NAME)
+		if cstr(result.get("reason")) == "legacy_bot_relabelled":
+			self.assertEqual(cstr(legacy_bot.bot_name), DEFAULT_BRIDGE_BOT_NAME)
+		if legacy_bot.raven_user and frappe.db.exists("Raven User", legacy_bot.raven_user):
+			raven_user = frappe.get_doc("Raven User", legacy_bot.raven_user)
+			if cstr(result.get("reason")) == "legacy_bot_relabelled":
+				self.assertEqual(cstr(raven_user.full_name), DEFAULT_BRIDGE_BOT_NAME)
+				self.assertEqual(cstr(raven_user.first_name), DEFAULT_BRIDGE_BOT_NAME)
+
+		second = repair_default_bridge_bot_name()
+		self.assertEqual(cstr(second.get("reason")), "not_legacy_default")
+		settings.reload()
+		self.assertEqual(cstr(settings.bridge_raven_bot), DEFAULT_BRIDGE_BOT_NAME)
+
+	def test_default_bot_repair_keeps_custom_configured_bot(self):
+		custom_name = f"{self.PREFIX} Custom Bot {frappe.generate_hash(length=5)}"
+		if not frappe.db.exists("Raven Bot", custom_name):
+			frappe.get_doc({"doctype": "Raven Bot", "bot_name": custom_name, "is_ai_bot": 0}).insert(
+				ignore_permissions=True
+			)
+		custom_bot = frappe.get_doc("Raven Bot", custom_name)
+		settings = frappe.get_single("WhatsApp Raven Bridge Settings")
+		settings.bridge_raven_bot = custom_bot.name
+		settings.bridge_raven_user = custom_bot.raven_user
+		settings.save(ignore_permissions=True)
+		frappe.db.commit()
+
+		result = repair_default_bridge_bot_name()
+		self.assertFalse(bool(result.get("attempted")))
+		self.assertEqual(cstr(result.get("reason")), "not_legacy_default")
+		custom_bot.reload()
+		self.assertEqual(cstr(custom_bot.bot_name), custom_name)
+
+	def test_patch_rename_default_bridge_bot_is_idempotent(self):
+		if not frappe.db.exists("Raven Bot", LEGACY_DEFAULT_BRIDGE_BOT_NAME):
+			frappe.get_doc(
+				{
+					"doctype": "Raven Bot",
+					"bot_name": LEGACY_DEFAULT_BRIDGE_BOT_NAME,
+					"is_ai_bot": 0,
+				}
+			).insert(ignore_permissions=True)
+		legacy_bot = frappe.get_doc("Raven Bot", LEGACY_DEFAULT_BRIDGE_BOT_NAME)
+		settings = frappe.get_single("WhatsApp Raven Bridge Settings")
+		settings.bridge_raven_bot = LEGACY_DEFAULT_BRIDGE_BOT_NAME
+		settings.bridge_raven_user = legacy_bot.raven_user
+		settings.save(ignore_permissions=True)
+		frappe.db.commit()
+
+		patch_rename_default_bridge_bot()
+		settings.reload()
+		legacy_bot.reload()
+		self.assertEqual(cstr(settings.bridge_raven_bot), DEFAULT_BRIDGE_BOT_NAME)
+		if cstr(legacy_bot.bot_name) == DEFAULT_BRIDGE_BOT_NAME:
+			self.assertEqual(cstr(legacy_bot.bot_name), DEFAULT_BRIDGE_BOT_NAME)
+		patch_rename_default_bridge_bot()
+		settings.reload()
+		legacy_bot.reload()
+		self.assertEqual(cstr(settings.bridge_raven_bot), DEFAULT_BRIDGE_BOT_NAME)
 
 	def test_bootstrap_from_settings_dialog_without_bridge_system_user_uses_default_path(self):
 		self._force_set_bridge_system_user(None)
@@ -1087,31 +1173,58 @@ class TestSetupBootstrapAndServiceUser(IntegrationTestCase):
 		)
 
 	def _cleanup(self):
-		conversation_names = set(
+		conversation_rows = frappe.get_all(
+			"WhatsApp Raven Conversation",
+			filters=[["phone_number", "like", "44775533%"]],
+			fields=["name", "parent_raven_message", "raven_channel"],
+		)
+		conversation_names = {row.name for row in conversation_rows if row.name}
+		parent_message_names = {row.parent_raven_message for row in conversation_rows if row.parent_raven_message}
+		thread_channel_names = {row.raven_channel for row in conversation_rows if row.raven_channel}
+
+		route_rows = frappe.get_all(
+			"WhatsApp Raven Account Route",
+			filters={"whatsapp_account": self.ACCOUNT_NAME},
+			fields=["name", "inbox_channel"],
+		)
+		route_names = {row.name for row in route_rows if row.name}
+		route_inbox_channels = {row.inbox_channel for row in route_rows if row.inbox_channel}
+
+		target_channels = set(thread_channel_names) | set(parent_message_names) | set(route_inbox_channels)
+
+		link_names = set(
 			frappe.get_all(
-				"WhatsApp Raven Conversation",
-				filters=[["phone_number", "like", "44775533%"]],
+				"WhatsApp Raven Message Link",
+				filters=[["whatsapp_message_id", "like", "wamid.warbh.%"]],
 				pluck="name",
 			)
 		)
-		parent_message_names = set()
 		if conversation_names:
-			parent_message_names = set(
+			link_names.update(
 				frappe.get_all(
-					"Raven Message",
-					filters={
-						"link_doctype": "WhatsApp Raven Conversation",
-						"link_document": ["in", list(conversation_names)],
-					},
+					"WhatsApp Raven Message Link",
+					filters=[["conversation", "in", list(conversation_names)]],
+					pluck="name",
+				)
+			)
+		if target_channels:
+			link_names.update(
+				frappe.get_all(
+					"WhatsApp Raven Message Link",
+					filters=[["raven_channel", "in", list(target_channels)]],
+					pluck="name",
+				)
+			)
+		if parent_message_names:
+			link_names.update(
+				frappe.get_all(
+					"WhatsApp Raven Message Link",
+					filters=[["raven_message", "in", list(parent_message_names)]],
 					pluck="name",
 				)
 			)
 
-		for name in frappe.get_all(
-			"WhatsApp Raven Message Link",
-			filters=[["whatsapp_message_id", "like", "wamid.warbh.%"]],
-			pluck="name",
-		):
+		for name in sorted(link_names):
 			frappe.delete_doc("WhatsApp Raven Message Link", name, force=True)
 
 		for name in frappe.get_all(
@@ -1122,24 +1235,13 @@ class TestSetupBootstrapAndServiceUser(IntegrationTestCase):
 			frappe.delete_doc("WhatsApp Message", name, force=True)
 
 		for name in frappe.get_all(
-			"Raven Message",
-			filters=[["text", "like", "%warbh%"]],
-			pluck="name",
-		):
-			frappe.delete_doc("Raven Message", name, force=True)
-
-		for name in frappe.get_all(
 			"WhatsApp Raven Conversation",
 			filters=[["phone_number", "like", "44775533%"]],
 			pluck="name",
 		):
 			frappe.delete_doc("WhatsApp Raven Conversation", name, force=True)
 
-		for name in frappe.get_all(
-			"WhatsApp Raven Account Route",
-			filters={"whatsapp_account": self.ACCOUNT_NAME},
-			pluck="name",
-		):
+		for name in route_names:
 			if frappe.db.exists("WhatsApp Raven Account Route", name):
 				frappe.delete_doc("WhatsApp Raven Account Route", name, force=True)
 

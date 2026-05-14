@@ -34,6 +34,11 @@ Also confirm incoming retries keep the same WhatsApp `message_id`.
 ## Raven shows large WhatsApp document cards
 
 Current bridge behavior is compact clickable headers for WhatsApp-origin lines.
+Incoming headers are highlighted; outgoing imported/backfilled headers are not.
+Headers show compact contact/agent names only (no `· WhatsApp` suffix).
+Account inbox thread-starter rows should show highlighted contact labels with code-formatted phone numbers (leading `+`) and no custom thread links.
+When the `phonenumbers` package is available, phone numbers are displayed with international spacing.
+Use Raven’s built-in **View Thread** button to open the thread.
 If older rows still show large WhatsApp document cards, run migrate (or admin repair API)
 to reformat legacy bridge-created rows while preserving timestamps and link mappings.
 
@@ -77,6 +82,16 @@ bench --site SITE execute whatsapp_raven_bridge.api.backfill.run_scheduled_backf
 ```
 
 For full-history import from Desk, use **Sync All Message History Now**.
+
+## Seed demo conversations for local UI testing
+
+Use the development-only seeder:
+
+```bash
+bench --site development.localhost execute whatsapp_raven_bridge.dev_seed.create_demo_whatsapp_raven_data --kwargs '{"conversations":10,"messages_per_conversation":10,"cleanup_existing":True}'
+```
+
+It creates mixed inbound/imported/human-reply thread data without real WhatsApp sends.
 
 ## Tests are making real Meta calls
 
