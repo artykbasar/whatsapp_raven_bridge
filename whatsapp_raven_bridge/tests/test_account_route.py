@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from urllib.parse import quote
-
 import frappe
 from frappe.tests import IntegrationTestCase
 from frappe.utils.password import set_encrypted_password
@@ -181,13 +179,14 @@ class TestAccountRouteDesign(IntegrationTestCase):
 		self.assertEqual(int(parent_message.hide_link_preview or 0), 1)
 		self.assertTrue(parent_message.is_thread)
 		self.assertTrue(parent_message.is_bot_message)
-		expected_route = (
-			f"/raven/{quote(route.raven_workspace, safe='')}"
-			f"/{quote(route.inbox_channel, safe='')}"
-			f"/thread/{quote(parent_message.name, safe='')}"
-		)
-		self.assertIn(expected_route, parent_message.text)
+		self.assertNotIn("href=", parent_message.text)
+		self.assertNotIn("/raven/", parent_message.text)
+		self.assertNotIn("/thread/", parent_message.text)
+		self.assertNotIn("target=", parent_message.text)
+		self.assertNotIn("onclick=", parent_message.text)
+		self.assertNotIn("style=", parent_message.text)
 		self.assertIn(phone_norm, parent_message.text)
+		self.assertIn("<strong>", parent_message.text)
 		self.assertNotIn("WhatsApp Raven Conversation", parent_message.text)
 		self.assertNotIn("WhatsApp conversation", parent_message.text)
 		self.assertNotIn(conversation.name, parent_message.text)

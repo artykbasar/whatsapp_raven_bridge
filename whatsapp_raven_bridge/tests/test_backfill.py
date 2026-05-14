@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timedelta
-from urllib.parse import quote
 
 import frappe
 from frappe.tests import IntegrationTestCase
@@ -812,19 +811,14 @@ class TestHistoricalBackfill(IntegrationTestCase):
 		self.assertFalse(cstr(parent_message.link_doctype))
 		self.assertFalse(cstr(parent_message.link_document))
 		self.assertEqual(int(parent_message.hide_link_preview or 0), 1)
-		route_name = frappe.db.get_value(
-			"WhatsApp Raven Account Route",
-			{"whatsapp_account": self.ACCOUNT_NAME, "enabled": 1},
-			"name",
-		)
-		route = frappe.get_doc("WhatsApp Raven Account Route", route_name)
-		expected_route = (
-			f"/raven/{quote(route.raven_workspace, safe='')}"
-			f"/{quote(route.inbox_channel, safe='')}"
-			f"/thread/{quote(parent_message.name, safe='')}"
-		)
-		self.assertIn(expected_route, cstr(parent_message.text))
+		self.assertNotIn("href=", cstr(parent_message.text))
+		self.assertNotIn("/raven/", cstr(parent_message.text))
+		self.assertNotIn("/thread/", cstr(parent_message.text))
+		self.assertNotIn("target=", cstr(parent_message.text))
+		self.assertNotIn("onclick=", cstr(parent_message.text))
+		self.assertNotIn("style=", cstr(parent_message.text))
 		self.assertIn("447744100001", cstr(parent_message.text))
+		self.assertIn("<strong>", cstr(parent_message.text))
 
 	def test_x_reformat_skips_human_outgoing_replies_and_is_idempotent(self):
 		conversation_name = frappe.db.get_value(
@@ -927,21 +921,20 @@ class TestHistoricalBackfill(IntegrationTestCase):
 		self.assertFalse(cstr(parent_message.link_document))
 		self.assertEqual(int(parent_message.hide_link_preview or 0), 1)
 
-		route_name = frappe.db.get_value(
-			"WhatsApp Raven Account Route",
-			{"whatsapp_account": self.ACCOUNT_NAME, "enabled": 1},
-			"name",
-		)
-		route = frappe.get_doc("WhatsApp Raven Account Route", route_name)
-		expected_route = (
-			f"/raven/{quote(route.raven_workspace, safe='')}"
-			f"/{quote(route.inbox_channel, safe='')}"
-			f"/thread/{quote(parent_message.name, safe='')}"
-		)
-		self.assertIn(expected_route, cstr(parent_message.text))
+		self.assertNotIn("href=", cstr(parent_message.text))
+		self.assertNotIn("/raven/", cstr(parent_message.text))
+		self.assertNotIn("/thread/", cstr(parent_message.text))
+		self.assertNotIn("target=", cstr(parent_message.text))
+		self.assertNotIn("onclick=", cstr(parent_message.text))
+		self.assertNotIn("style=", cstr(parent_message.text))
 		self.assertIn("447744100001", cstr(parent_message.text))
+		self.assertIn("<strong>", cstr(parent_message.text))
 		self.assertNotIn("WhatsApp Raven Conversation", cstr(parent_message.text))
 		self.assertNotIn("WhatsApp conversation", cstr(parent_message.text))
+		self.assertNotIn("STYLE TEST", cstr(parent_message.text))
+		self.assertNotIn("TARGET SELF TEST", cstr(parent_message.text))
+		self.assertNotIn("TARGET BLANK TEST", cstr(parent_message.text))
+		self.assertNotIn("ONCLICK TEST", cstr(parent_message.text))
 		self.assertEqual(get_datetime(parent_message.creation), parent_creation)
 		self.assertEqual(get_datetime(parent_message.modified), parent_modified)
 
@@ -995,6 +988,13 @@ class TestHistoricalBackfill(IntegrationTestCase):
 		self.assertFalse(cstr(parent_doc.link_doctype))
 		self.assertFalse(cstr(parent_doc.link_document))
 		self.assertEqual(int(parent_doc.hide_link_preview or 0), 1)
+		self.assertNotIn("href=", cstr(parent_doc.text))
+		self.assertNotIn("/raven/", cstr(parent_doc.text))
+		self.assertNotIn("/thread/", cstr(parent_doc.text))
+		self.assertNotIn("STYLE TEST", cstr(parent_doc.text))
+		self.assertNotIn("TARGET SELF TEST", cstr(parent_doc.text))
+		self.assertNotIn("TARGET BLANK TEST", cstr(parent_doc.text))
+		self.assertNotIn("ONCLICK TEST", cstr(parent_doc.text))
 
 		route_name = frappe.db.get_value(
 			"WhatsApp Raven Account Route",

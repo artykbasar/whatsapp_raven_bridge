@@ -15,15 +15,6 @@ def desk_whatsapp_message_route(whatsapp_message_name: str) -> str:
 	return f"/app/whatsapp-message/{quote(cstr(whatsapp_message_name or '').strip(), safe='')}"
 
 
-def raven_thread_route(workspace_id: str, channel_id: str, thread_id: str) -> str:
-	"""Return Raven thread route used by View Thread links."""
-	return (
-		f"/raven/{quote(cstr(workspace_id or '').strip(), safe='')}"
-		f"/{quote(cstr(channel_id or '').strip(), safe='')}"
-		f"/thread/{quote(cstr(thread_id or '').strip(), safe='')}"
-	)
-
-
 def build_parent_thread_starter_html(
 	*,
 	workspace_id: str,
@@ -32,13 +23,14 @@ def build_parent_thread_starter_html(
 	contact_label: str,
 	phone_number: str | None,
 ) -> str:
-	"""Render clean parent thread-starter text with links to Raven thread."""
-	route = raven_thread_route(workspace_id, inbox_channel_id, thread_id)
+	"""Render plain parent thread-starter text (no custom thread links)."""
+	# Keep params for API stability at call sites while intentionally not using them.
+	_ = workspace_id, inbox_channel_id, thread_id
 	label = cstr(contact_label or "").strip() or "Unknown WhatsApp Contact"
 	phone = cstr(phone_number or "").strip()
-	lines = [f'<p><a href="{escape_html(route)}"><strong>{escape_html(label)}</strong></a></p>']
+	lines = [f"<p><strong>{escape_html(label)}</strong></p>"]
 	if phone:
-		lines.append(f'<p><a href="{escape_html(route)}">{escape_html(phone)}</a></p>')
+		lines.append(f"<p>{escape_html(phone)}</p>")
 	return "".join(lines)
 
 

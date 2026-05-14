@@ -181,6 +181,6 @@ def reformat_existing_whatsapp_origin_raven_messages() -> dict[str, Any]:
 
 @frappe.whitelist()
 def reformat_existing_parent_thread_messages() -> dict[str, Any]:
-	"""Repair older thread parent starter messages to clean Raven-thread links."""
+	"""Repair older thread parent starter messages to plain contact+phone text."""
 	_require_backfill_permission()
 	return dict(reformat_existing_parent_thread_messages_internal())

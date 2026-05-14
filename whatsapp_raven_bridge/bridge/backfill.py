@@ -806,7 +806,7 @@ def reformat_existing_whatsapp_origin_raven_messages() -> frappe._dict:
 
 
 def reformat_existing_parent_thread_messages() -> frappe._dict:
-	"""Rewrite old parent thread-starter rows into compact thread-link format."""
+	"""Rewrite old parent thread-starter rows into plain contact+phone format."""
 	summary = frappe._dict(
 		{
 			"scanned_conversations": 0,

@@ -1,4 +1,4 @@
-"""Retrofit older WhatsApp thread parent messages to plain contact+phone text."""
+"""Re-run parent thread starter retrofit to enforce plain non-link rendering."""
 
 from __future__ import annotations
 
