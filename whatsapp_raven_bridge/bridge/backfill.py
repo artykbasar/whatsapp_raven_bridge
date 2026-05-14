@@ -811,6 +811,7 @@ def reformat_existing_parent_thread_messages() -> frappe._dict:
 		{
 			"scanned_conversations": 0,
 			"reformatted": 0,
+			"repaired_missing_parent": 0,
 			"skipped_missing_parent_message": 0,
 			"skipped_not_thread_route": 0,
 			"skipped_unrelated": 0,
@@ -829,7 +830,12 @@ def reformat_existing_parent_thread_messages() -> frappe._dict:
 		try:
 			parent_name = cstr(row.get("parent_raven_message") or "").strip()
 			if not parent_name or not frappe.db.exists("Raven Message", parent_name):
-				summary.skipped_missing_parent_message += 1
+				repair_status = _repair_missing_parent_thread_message(row)
+				if repair_status == "repaired":
+					summary.repaired_missing_parent += 1
+					summary.reformatted += 1
+				else:
+					summary.skipped_missing_parent_message += 1
 				continue
 
 			parent_message = frappe.get_doc("Raven Message", parent_name)
@@ -845,6 +851,22 @@ def reformat_existing_parent_thread_messages() -> frappe._dict:
 			inbox_channel = frappe.get_doc("Raven Channel", inbox_channel_name)
 			workspace_id = cstr(inbox_channel.get("workspace") or "").strip()
 			if not workspace_id:
+				summary.skipped_unrelated += 1
+				continue
+			thread_channel_name = cstr(row.get("raven_channel") or "").strip()
+			if not thread_channel_name or not frappe.db.exists("Raven Channel", thread_channel_name):
+				summary.skipped_not_thread_route += 1
+				continue
+			if not cint(frappe.db.get_value("Raven Channel", thread_channel_name, "is_thread")):
+				summary.skipped_not_thread_route += 1
+				continue
+			if cstr(parent_message.get("channel_id") or "").strip() == thread_channel_name:
+				# This is a thread message, not an inbox parent starter.
+				summary.skipped_not_thread_route += 1
+				continue
+
+			route_inbox = _get_route_inbox_channel(cstr(row.get("account_route") or "").strip())
+			if route_inbox and route_inbox != inbox_channel_name:
 				summary.skipped_unrelated += 1
 				continue
 
@@ -894,6 +916,56 @@ def reformat_existing_parent_thread_messages() -> frappe._dict:
 		refresh_thread_last_message_state(channel_id)
 
 	return summary
+
+
+def _repair_missing_parent_thread_message(conversation_row: frappe._dict) -> str:
+	"""Repair stale conversation rows where parent message is missing but thread channel still exists."""
+	conversation_name = cstr(conversation_row.get("name") or "").strip()
+	if not conversation_name or not frappe.db.exists("WhatsApp Raven Conversation", conversation_name):
+		return "skipped"
+	thread_channel_name = cstr(conversation_row.get("raven_channel") or "").strip()
+	if not thread_channel_name or not frappe.db.exists("Raven Channel", thread_channel_name):
+		return "skipped"
+	if not cint(frappe.db.get_value("Raven Channel", thread_channel_name, "is_thread")):
+		return "skipped"
+
+	conversation = frappe.get_doc("WhatsApp Raven Conversation", conversation_name)
+	old_thread_channel = cstr(conversation.raven_channel or "").strip()
+	frappe.db.set_value(
+		"WhatsApp Raven Conversation",
+		conversation.name,
+		{
+			"parent_raven_message": None,
+			"raven_channel": None,
+		},
+		update_modified=False,
+	)
+	frappe.clear_document_cache("WhatsApp Raven Conversation", conversation.name)
+	conversation.reload()
+
+	ensure_raven_destination(conversation)
+	conversation.reload()
+	new_thread_channel = cstr(conversation.raven_channel or "").strip()
+	if old_thread_channel and new_thread_channel and old_thread_channel != new_thread_channel:
+		frappe.db.sql(
+			"""
+			update `tabRaven Message`
+			set channel_id=%s
+			where channel_id=%s and name!=%s
+			""",
+			(new_thread_channel, old_thread_channel, old_thread_channel),
+		)
+		frappe.db.sql(
+			"""
+			update `tabWhatsApp Raven Message Link`
+			set raven_channel=%s
+			where raven_channel=%s
+			""",
+			(new_thread_channel, old_thread_channel),
+		)
+		refresh_thread_last_message_state(new_thread_channel)
+		refresh_thread_last_message_state(old_thread_channel)
+	return "repaired"
 
 
 def _is_rewritable_whatsapp_origin_row(link, raven_message) -> bool:

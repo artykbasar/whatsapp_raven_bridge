@@ -81,6 +81,16 @@ bench --site SITE execute whatsapp_raven_bridge.api.backfill.run_scheduled_backf
 
 For full-history import from Desk, use **Sync All Message History Now**.
 
+## Seed demo conversations for local UI testing
+
+Use the development-only seeder:
+
+```bash
+bench --site development.localhost execute whatsapp_raven_bridge.dev_seed.create_demo_whatsapp_raven_data --kwargs '{"conversations":10,"messages_per_conversation":10,"cleanup_existing":True}'
+```
+
+It creates mixed inbound/imported/human-reply thread data without real WhatsApp sends.
+
 ## Tests are making real Meta calls
 
 Bridge tests monkeypatch `WhatsAppMessage.notify` to avoid real network calls.

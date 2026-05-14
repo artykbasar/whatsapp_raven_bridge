@@ -1176,15 +1176,55 @@ class TestSetupBootstrapAndServiceUser(IntegrationTestCase):
 		conversation_rows = frappe.get_all(
 			"WhatsApp Raven Conversation",
 			filters=[["phone_number", "like", "44775533%"]],
-			fields=["name", "parent_raven_message"],
+			fields=["name", "parent_raven_message", "raven_channel"],
 		)
+		conversation_names = {row.name for row in conversation_rows if row.name}
 		parent_message_names = {row.parent_raven_message for row in conversation_rows if row.parent_raven_message}
+		thread_channel_names = {row.raven_channel for row in conversation_rows if row.raven_channel}
 
-		for name in frappe.get_all(
-			"WhatsApp Raven Message Link",
-			filters=[["whatsapp_message_id", "like", "wamid.warbh.%"]],
-			pluck="name",
-		):
+		route_rows = frappe.get_all(
+			"WhatsApp Raven Account Route",
+			filters={"whatsapp_account": self.ACCOUNT_NAME},
+			fields=["name", "inbox_channel"],
+		)
+		route_names = {row.name for row in route_rows if row.name}
+		route_inbox_channels = {row.inbox_channel for row in route_rows if row.inbox_channel}
+
+		target_channels = set(thread_channel_names) | set(parent_message_names) | set(route_inbox_channels)
+
+		link_names = set(
+			frappe.get_all(
+				"WhatsApp Raven Message Link",
+				filters=[["whatsapp_message_id", "like", "wamid.warbh.%"]],
+				pluck="name",
+			)
+		)
+		if conversation_names:
+			link_names.update(
+				frappe.get_all(
+					"WhatsApp Raven Message Link",
+					filters=[["conversation", "in", list(conversation_names)]],
+					pluck="name",
+				)
+			)
+		if target_channels:
+			link_names.update(
+				frappe.get_all(
+					"WhatsApp Raven Message Link",
+					filters=[["raven_channel", "in", list(target_channels)]],
+					pluck="name",
+				)
+			)
+		if parent_message_names:
+			link_names.update(
+				frappe.get_all(
+					"WhatsApp Raven Message Link",
+					filters=[["raven_message", "in", list(parent_message_names)]],
+					pluck="name",
+				)
+			)
+
+		for name in sorted(link_names):
 			frappe.delete_doc("WhatsApp Raven Message Link", name, force=True)
 
 		for name in frappe.get_all(
@@ -1201,19 +1241,7 @@ class TestSetupBootstrapAndServiceUser(IntegrationTestCase):
 		):
 			frappe.delete_doc("WhatsApp Raven Conversation", name, force=True)
 
-		for name in frappe.get_all(
-			"Raven Message",
-			filters=[["text", "like", "%warbh%"]],
-			pluck="name",
-		):
-			if frappe.db.exists("Raven Message", name):
-				frappe.delete_doc("Raven Message", name, force=True)
-
-		for name in frappe.get_all(
-			"WhatsApp Raven Account Route",
-			filters={"whatsapp_account": self.ACCOUNT_NAME},
-			pluck="name",
-		):
+		for name in route_names:
 			if frappe.db.exists("WhatsApp Raven Account Route", name):
 				frappe.delete_doc("WhatsApp Raven Account Route", name, force=True)
 

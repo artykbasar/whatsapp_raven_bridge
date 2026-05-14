@@ -55,6 +55,7 @@ def get_default_channel_members(settings=None):
 def ensure_raven_destination(conversation):
 	"""Create or reuse a Raven Channel for the given WhatsApp Raven Conversation."""
 	conversation_doc = _get_conversation_doc(conversation)
+	_clear_stale_conversation_links(conversation_doc)
 
 	settings = get_settings()
 	if not settings or not cint(settings.get("enabled")):
@@ -82,6 +83,27 @@ def ensure_raven_destination(conversation):
 		frappe.throw(_("Default Channel Type is required in WhatsApp Raven Bridge Settings."))
 
 	return _ensure_global_channel_per_contact_destination(conversation_doc, settings)
+
+
+def _clear_stale_conversation_links(conversation_doc) -> None:
+	"""Clear stale link fields on conversation rows so repairs can proceed safely."""
+	link_map = {
+		"account_route": "WhatsApp Raven Account Route",
+		"raven_channel": RAVEN_CHANNEL_DOCTYPE,
+		"parent_raven_message": RAVEN_MESSAGE_DOCTYPE,
+		"last_raven_message": RAVEN_MESSAGE_DOCTYPE,
+		"last_inbound_whatsapp_message": "WhatsApp Message",
+		"last_outbound_whatsapp_message": "WhatsApp Message",
+	}
+	updates = {}
+	for fieldname, doctype in link_map.items():
+		value = cstr(conversation_doc.get(fieldname) or "").strip()
+		if value and not frappe.db.exists(doctype, value):
+			updates[fieldname] = None
+			conversation_doc.set(fieldname, None)
+	if updates:
+		frappe.db.set_value(CONVERSATION_DOCTYPE, conversation_doc.name, updates, update_modified=False)
+		frappe.clear_document_cache(CONVERSATION_DOCTYPE, conversation_doc.name)
 
 
 def _ensure_route_destination(conversation_doc, route, settings):
@@ -142,12 +164,22 @@ def ensure_thread_destination(conversation, route, settings=None):
 
 	parent_message = _get_existing_parent_thread_message(conversation_doc)
 	thread_channel = _get_existing_thread_channel(conversation_doc, parent_message)
+	stale_parent_reference = bool(cstr(conversation_doc.parent_raven_message or "").strip() and not parent_message)
+	orphan_thread_channel = None
+	if stale_parent_reference and thread_channel:
+		# The stored parent message is missing while the old thread channel still exists.
+		# Force creation of a new canonical parent/thread pair, then migrate thread messages.
+		orphan_thread_channel = thread_channel
+		thread_channel = None
 
 	if not parent_message:
 		parent_message = _create_parent_thread_message(conversation_doc, route_doc, settings, inbox_channel)
 
 	if not thread_channel:
 		thread_channel = _create_or_get_thread_channel(parent_message, inbox_channel)
+
+	if orphan_thread_channel and thread_channel and orphan_thread_channel.name != thread_channel.name:
+		_migrate_thread_channel(orphan_thread_channel.name, thread_channel.name)
 
 	if not cint(parent_message.is_thread):
 		frappe.db.set_value(
@@ -169,6 +201,39 @@ def ensure_thread_destination(conversation, route, settings=None):
 
 	ensure_thread_memberships(thread_channel, route_doc, settings=settings)
 	return thread_channel
+
+
+def _migrate_thread_channel(old_channel_id: str, new_channel_id: str) -> None:
+	"""Move existing thread messages/links from a stale thread channel to canonical channel."""
+	old_id = cstr(old_channel_id or "").strip()
+	new_id = cstr(new_channel_id or "").strip()
+	if not old_id or not new_id or old_id == new_id:
+		return
+	if not frappe.db.exists(RAVEN_CHANNEL_DOCTYPE, old_id):
+		return
+	if not frappe.db.exists(RAVEN_CHANNEL_DOCTYPE, new_id):
+		return
+	if not cint(frappe.db.get_value(RAVEN_CHANNEL_DOCTYPE, old_id, "is_thread")):
+		return
+
+	frappe.db.sql(
+		"""
+		update `tabRaven Message`
+		set channel_id=%s
+		where channel_id=%s and name!=%s
+		""",
+		(new_id, old_id, old_id),
+	)
+	frappe.db.sql(
+		"""
+		update `tabWhatsApp Raven Message Link`
+		set raven_channel=%s
+		where raven_channel=%s
+		""",
+		(new_id, old_id),
+	)
+	frappe.clear_document_cache(RAVEN_CHANNEL_DOCTYPE, old_id)
+	frappe.clear_document_cache(RAVEN_CHANNEL_DOCTYPE, new_id)
 
 
 def ensure_thread_memberships(thread_channel, route, settings=None):

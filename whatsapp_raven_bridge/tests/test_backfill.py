@@ -948,6 +948,65 @@ class TestHistoricalBackfill(IntegrationTestCase):
 		child_message.reload()
 		self.assertEqual(cstr(child_message.text), child_text_before)
 
+	def test_y2_parent_reformat_repairs_missing_parent_without_losing_thread_messages(self):
+		first = self._insert_whatsapp_incoming("y20", "missing parent repair 1")
+		self._insert_whatsapp_incoming("y21", "missing parent repair 2")
+		import_result = backfill_whatsapp_messages(
+			whatsapp_account=self.ACCOUNT_NAME,
+			phone_number="+447744100001",
+			dry_run=0,
+			limit=100,
+		)
+		self.assertGreaterEqual(int(import_result.get("imported") or 0), 1)
+		conversation_name = frappe.db.get_value(
+			"WhatsApp Raven Conversation",
+			{"whatsapp_account": self.ACCOUNT_NAME, "phone_number": "447744100001"},
+			"name",
+		)
+		if not conversation_name:
+			link_name = frappe.db.get_value("WhatsApp Raven Message Link", {"whatsapp_message": first.name}, "name")
+			if link_name:
+				conversation_name = frappe.db.get_value("WhatsApp Raven Message Link", link_name, "conversation")
+		self.assertTrue(conversation_name)
+		conversation = frappe.get_doc("WhatsApp Raven Conversation", conversation_name)
+		old_parent = cstr(conversation.parent_raven_message)
+		old_thread = cstr(conversation.raven_channel)
+		self.assertTrue(old_parent)
+		self.assertTrue(old_thread)
+		old_thread_count = frappe.db.count("Raven Message", {"channel_id": old_thread})
+		self.assertGreaterEqual(old_thread_count, 1)
+
+		frappe.db.sql("delete from `tabRaven Message` where name=%s", (old_parent,))
+		frappe.clear_document_cache("Raven Message", old_parent)
+
+		repair = reformat_existing_parent_thread_messages_api()
+		conversation.reload()
+		new_parent = cstr(conversation.parent_raven_message)
+		new_thread = cstr(conversation.raven_channel)
+		self.assertGreaterEqual(int(repair.get("repaired_missing_parent") or 0), 1)
+		self.assertTrue(new_parent)
+		self.assertTrue(new_thread)
+		self.assertTrue(frappe.db.exists("Raven Message", new_parent))
+		self.assertTrue(frappe.db.exists("Raven Channel", new_thread))
+		self.assertEqual(int(frappe.db.get_value("Raven Message", new_parent, "is_thread") or 0), 1)
+		self.assertEqual(int(frappe.db.get_value("Raven Channel", new_thread, "is_thread") or 0), 1)
+		self.assertGreaterEqual(frappe.db.count("Raven Message", {"channel_id": new_thread}), old_thread_count)
+		parent_doc = frappe.get_doc("Raven Message", new_parent)
+		self.assertFalse(cstr(parent_doc.link_doctype))
+		self.assertFalse(cstr(parent_doc.link_document))
+		self.assertEqual(int(parent_doc.hide_link_preview or 0), 1)
+
+		route_name = frappe.db.get_value(
+			"WhatsApp Raven Account Route",
+			{"whatsapp_account": self.ACCOUNT_NAME, "enabled": 1},
+			"name",
+		)
+		route = frappe.get_doc("WhatsApp Raven Account Route", route_name)
+		self.assertEqual(cstr(parent_doc.channel_id), cstr(route.inbox_channel))
+
+		second = reformat_existing_parent_thread_messages_api()
+		self.assertEqual(int(second.get("reformatted") or 0), 0)
+
 	def test_z_reformat_outgoing_backfilled_uses_known_agent_label(self):
 		outgoing = self._insert_whatsapp_outgoing("z01", "legacy known agent body")
 		self._set_whatsapp_message_actor(outgoing.name, self.AGENT_USER, self.AGENT_USER)

@@ -136,6 +136,7 @@ Legacy default bot label `WhatsApp Bridge Bot` is repaired to `WhatsApp` by setu
 - Configuration: [docs/CONFIGURATION.md](docs/CONFIGURATION.md)
 - Usage: [docs/USAGE.md](docs/USAGE.md)
 - Troubleshooting: [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
+- Development: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)
 
 ## Backfill (CLI)
 
