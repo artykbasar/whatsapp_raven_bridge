@@ -122,7 +122,8 @@ class TestTwoWayMVPHardening(IntegrationTestCase):
 		self.assertIn("<mark><strong>", cstr(raven_message.text))
 		self.assertIn("WARB4B Profile", cstr(raven_message.text))
 		self.assertNotIn("· WhatsApp", cstr(raven_message.text))
-		self.assertIn("<p><br></p>", cstr(raven_message.text))
+		self.assertIn("</a></p><p>", cstr(raven_message.text))
+		self.assertNotIn("<p><br></p>", cstr(raven_message.text))
 		self.assertEqual(raven_message.channel_id, channel.name)
 		self.assertEqual(cstr(raven_message.message_type), "Text")
 
@@ -160,7 +161,30 @@ class TestTwoWayMVPHardening(IntegrationTestCase):
 		raven_message = frappe.get_doc("Raven Message", raven_name)
 		self.assertIn(f"<mark><strong>{normalized_phone}</strong></mark>", cstr(raven_message.text))
 		self.assertNotIn("· WhatsApp", cstr(raven_message.text))
-		self.assertIn("<p><br></p>", cstr(raven_message.text))
+		self.assertIn("</a></p><p>", cstr(raven_message.text))
+		self.assertNotIn("<p><br></p>", cstr(raven_message.text))
+
+	def test_01c_incoming_multiline_preserves_line_breaks(self):
+		phone = self._phone("16")
+		payload = {
+			"doctype": "WhatsApp Message",
+			"type": "Incoming",
+			"content_type": "text",
+			"message_type": "Manual",
+			"from": phone,
+			"profile_name": "Manual Sync Tester",
+			"message": "line one\nline two",
+			"message_id": self._message_id("16"),
+			"whatsapp_account": self.ACCOUNT_NAME,
+		}
+		incoming = frappe.get_doc(payload).insert(ignore_permissions=True)
+		link_name = frappe.db.get_value("WhatsApp Raven Message Link", {"whatsapp_message": incoming.name}, "name")
+		self.assertTrue(link_name)
+		raven_name = frappe.db.get_value("WhatsApp Raven Message Link", link_name, "raven_message")
+		raven_message = frappe.get_doc("Raven Message", raven_name)
+		self.assertIn("<mark><strong>Manual Sync Tester</strong></mark>", cstr(raven_message.text))
+		self.assertIn("</a></p><p>line one</p><p>line two</p>", cstr(raven_message.text))
+		self.assertNotIn("<p><br></p>", cstr(raven_message.text))
 
 	def test_02_reprocessing_same_whatsapp_message_is_idempotent(self):
 		message_id = self._message_id("02")

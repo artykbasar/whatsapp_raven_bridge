@@ -8,16 +8,20 @@ from frappe.utils.password import set_encrypted_password
 
 import whatsapp_raven_bridge.api.setup as setup_api
 from whatsapp_raven_bridge.api.setup import (
+	DEFAULT_BRIDGE_BOT_NAME,
 	DEFAULT_BRIDGE_SYSTEM_USER_EMAIL,
+	LEGACY_DEFAULT_BRIDGE_BOT_NAME,
 	bootstrap_all_accounts_from_settings,
 	bootstrap_from_settings_dialog,
 	bootstrap_whatsapp_raven_bridge,
 	ensure_default_bridge_system_user,
 	get_setup_status,
+	repair_default_bridge_bot_name,
 	repair_bridge_system_user,
 )
 from whatsapp_raven_bridge.patches.fix_stale_bridge_system_user import execute as patch_fix_stale_bridge_system_user
 from whatsapp_raven_bridge.patches.fix_stale_bridge_system_user_v2 import execute as patch_fix_stale_bridge_system_user_v2
+from whatsapp_raven_bridge.patches.rename_default_bridge_bot import execute as patch_rename_default_bridge_bot
 from whatsapp_raven_bridge.bridge.conversation import normalize_phone_number
 from whatsapp_raven_bridge.bridge.raven_destination import ensure_raven_destination
 from whatsapp_raven_bridge.utils.settings import bridge_user_context
@@ -410,13 +414,13 @@ class TestSetupBootstrapAndServiceUser(IntegrationTestCase):
 			result = bootstrap_all_accounts_from_settings()
 			self.assertTrue(result.get("settings_updated"))
 			self.assertEqual(result.get("workspace"), expected_workspace)
-			self.assertEqual(result.get("bot"), "WhatsApp")
+			self.assertEqual(result.get("bot"), DEFAULT_BRIDGE_BOT_NAME)
 			self.assertEqual(int(result.get("account_count") or 0), len(target_accounts))
 			self.assertGreaterEqual(len(result.get("routes") or []), len(target_accounts))
 
 			settings.reload()
 			self.assertEqual(cstr(settings.default_raven_workspace), expected_workspace)
-			self.assertEqual(cstr(settings.bridge_raven_bot), "WhatsApp")
+			self.assertEqual(cstr(settings.bridge_raven_bot), DEFAULT_BRIDGE_BOT_NAME)
 			self.assertEqual(cstr(settings.default_channel_type), "Private")
 			self.assertEqual(cstr(settings.conversation_strategy), "Thread Per Contact")
 			self.assertEqual(int(settings.enable_outbound_replies), 1)
@@ -445,6 +449,88 @@ class TestSetupBootstrapAndServiceUser(IntegrationTestCase):
 				)
 		finally:
 			setup_api._get_all_whatsapp_accounts = original_get_all_accounts
+
+	def test_default_bot_repair_renames_legacy_default_when_configured(self):
+		if not frappe.db.exists("Raven Bot", LEGACY_DEFAULT_BRIDGE_BOT_NAME):
+			frappe.get_doc(
+				{
+					"doctype": "Raven Bot",
+					"bot_name": LEGACY_DEFAULT_BRIDGE_BOT_NAME,
+					"is_ai_bot": 0,
+				}
+			).insert(ignore_permissions=True)
+		legacy_bot = frappe.get_doc("Raven Bot", LEGACY_DEFAULT_BRIDGE_BOT_NAME)
+		settings = frappe.get_single("WhatsApp Raven Bridge Settings")
+		settings.bridge_raven_bot = LEGACY_DEFAULT_BRIDGE_BOT_NAME
+		settings.bridge_raven_user = legacy_bot.raven_user
+		settings.save(ignore_permissions=True)
+		frappe.db.commit()
+
+		result = repair_default_bridge_bot_name()
+		self.assertTrue(bool(result.get("attempted")))
+		self.assertTrue(bool(result.get("repaired")))
+
+		settings.reload()
+		legacy_bot.reload()
+		self.assertEqual(cstr(settings.bridge_raven_bot), DEFAULT_BRIDGE_BOT_NAME)
+		if cstr(result.get("reason")) == "legacy_bot_relabelled":
+			self.assertEqual(cstr(legacy_bot.bot_name), DEFAULT_BRIDGE_BOT_NAME)
+		if legacy_bot.raven_user and frappe.db.exists("Raven User", legacy_bot.raven_user):
+			raven_user = frappe.get_doc("Raven User", legacy_bot.raven_user)
+			if cstr(result.get("reason")) == "legacy_bot_relabelled":
+				self.assertEqual(cstr(raven_user.full_name), DEFAULT_BRIDGE_BOT_NAME)
+				self.assertEqual(cstr(raven_user.first_name), DEFAULT_BRIDGE_BOT_NAME)
+
+		second = repair_default_bridge_bot_name()
+		self.assertEqual(cstr(second.get("reason")), "not_legacy_default")
+		settings.reload()
+		self.assertEqual(cstr(settings.bridge_raven_bot), DEFAULT_BRIDGE_BOT_NAME)
+
+	def test_default_bot_repair_keeps_custom_configured_bot(self):
+		custom_name = f"{self.PREFIX} Custom Bot {frappe.generate_hash(length=5)}"
+		if not frappe.db.exists("Raven Bot", custom_name):
+			frappe.get_doc({"doctype": "Raven Bot", "bot_name": custom_name, "is_ai_bot": 0}).insert(
+				ignore_permissions=True
+			)
+		custom_bot = frappe.get_doc("Raven Bot", custom_name)
+		settings = frappe.get_single("WhatsApp Raven Bridge Settings")
+		settings.bridge_raven_bot = custom_bot.name
+		settings.bridge_raven_user = custom_bot.raven_user
+		settings.save(ignore_permissions=True)
+		frappe.db.commit()
+
+		result = repair_default_bridge_bot_name()
+		self.assertFalse(bool(result.get("attempted")))
+		self.assertEqual(cstr(result.get("reason")), "not_legacy_default")
+		custom_bot.reload()
+		self.assertEqual(cstr(custom_bot.bot_name), custom_name)
+
+	def test_patch_rename_default_bridge_bot_is_idempotent(self):
+		if not frappe.db.exists("Raven Bot", LEGACY_DEFAULT_BRIDGE_BOT_NAME):
+			frappe.get_doc(
+				{
+					"doctype": "Raven Bot",
+					"bot_name": LEGACY_DEFAULT_BRIDGE_BOT_NAME,
+					"is_ai_bot": 0,
+				}
+			).insert(ignore_permissions=True)
+		legacy_bot = frappe.get_doc("Raven Bot", LEGACY_DEFAULT_BRIDGE_BOT_NAME)
+		settings = frappe.get_single("WhatsApp Raven Bridge Settings")
+		settings.bridge_raven_bot = LEGACY_DEFAULT_BRIDGE_BOT_NAME
+		settings.bridge_raven_user = legacy_bot.raven_user
+		settings.save(ignore_permissions=True)
+		frappe.db.commit()
+
+		patch_rename_default_bridge_bot()
+		settings.reload()
+		legacy_bot.reload()
+		self.assertEqual(cstr(settings.bridge_raven_bot), DEFAULT_BRIDGE_BOT_NAME)
+		if cstr(legacy_bot.bot_name) == DEFAULT_BRIDGE_BOT_NAME:
+			self.assertEqual(cstr(legacy_bot.bot_name), DEFAULT_BRIDGE_BOT_NAME)
+		patch_rename_default_bridge_bot()
+		settings.reload()
+		legacy_bot.reload()
+		self.assertEqual(cstr(settings.bridge_raven_bot), DEFAULT_BRIDGE_BOT_NAME)
 
 	def test_bootstrap_from_settings_dialog_without_bridge_system_user_uses_default_path(self):
 		self._force_set_bridge_system_user(None)

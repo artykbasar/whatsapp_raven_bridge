@@ -127,6 +127,7 @@ It does not attach each chat line as a visible WhatsApp Message document card.
 Parent thread/inbox conversation cards remain unchanged.
 
 Recommended bot display name is `WhatsApp`; Raven adds its own bot badge in UI.
+Legacy default bot label `WhatsApp Bridge Bot` is repaired to `WhatsApp` by setup/migrate repair helpers when safe.
 
 ## Documentation
 

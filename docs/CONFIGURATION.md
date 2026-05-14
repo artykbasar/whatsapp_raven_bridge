@@ -101,3 +101,4 @@ Desk-friendly setup is available from **WhatsApp Raven Bridge Settings**:
 They serve different purposes and should both be configured.
 
 Recommended bot display name is `WhatsApp` so Raven UI shows `WhatsApp Bot` with its native badge.
+Legacy default `WhatsApp Bridge Bot` can be repaired to `WhatsApp` during migrate/setup repair when the bot is clearly app-managed.

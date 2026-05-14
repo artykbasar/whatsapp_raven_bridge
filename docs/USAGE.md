@@ -19,7 +19,7 @@ Current behavior is text-only two-way sync.
    - channel-per-contact fallback otherwise
 4. Bridge creates one Raven **Text** message.
    - Message header is a clickable link to `/app/whatsapp-message/<name>`.
-   - Incoming headers are highlighted and separated from body with a spacer line.
+   - Incoming headers are highlighted with compact normal line spacing.
    - Individual mirrored chat lines do not render as large WhatsApp document cards.
 5. Bridge creates one **WhatsApp Raven Message Link** for idempotency.
 

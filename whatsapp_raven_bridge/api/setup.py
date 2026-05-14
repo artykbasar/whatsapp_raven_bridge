@@ -16,6 +16,8 @@ from whatsapp_raven_bridge.bridge.account_route import (
 from whatsapp_raven_bridge.utils.settings import bridge_user_context, get_settings
 
 DEFAULT_BRIDGE_SYSTEM_USER_EMAIL = "whatsapp.bridge@example.com"
+DEFAULT_BRIDGE_BOT_NAME = "WhatsApp"
+LEGACY_DEFAULT_BRIDGE_BOT_NAME = "WhatsApp Bridge Bot"
 
 
 def _ensure_default_bridge_system_user_state(
@@ -147,6 +149,148 @@ def repair_bridge_system_user(default_email: str | None = None) -> dict[str, Any
 	return dict(_repair_bridge_system_user_single_value(default_email=default_email))
 
 
+def _repair_default_bridge_bot_name_state(
+	*,
+	settings=None,
+	update_settings: bool = True,
+) -> frappe._dict:
+	"""Safely repair legacy default bridge bot display from 'WhatsApp Bridge Bot' to 'WhatsApp'."""
+	result = frappe._dict(
+		{
+			"attempted": False,
+			"repaired": False,
+			"bot_before": "",
+			"bot_after": "",
+			"raven_user_before": "",
+			"raven_user_after": "",
+			"reason": "",
+		}
+	)
+	settings = settings or get_settings()
+	if not settings:
+		result.reason = "missing_settings"
+		return result
+
+	configured_bot = cstr(settings.get("bridge_raven_bot") or "").strip()
+	configured_raven_user = cstr(settings.get("bridge_raven_user") or "").strip()
+	result.bot_before = configured_bot
+	result.raven_user_before = configured_raven_user
+
+	if configured_bot != LEGACY_DEFAULT_BRIDGE_BOT_NAME:
+		result.reason = "not_legacy_default"
+		result.bot_after = configured_bot
+		result.raven_user_after = configured_raven_user
+		return result
+
+	if configured_raven_user and configured_raven_user not in (
+		LEGACY_DEFAULT_BRIDGE_BOT_NAME,
+		DEFAULT_BRIDGE_BOT_NAME,
+	):
+		result.reason = "custom_raven_user_configured"
+		result.bot_after = configured_bot
+		result.raven_user_after = configured_raven_user
+		return result
+
+	result.attempted = True
+	if not frappe.db.exists("Raven Bot", configured_bot):
+		if frappe.db.exists("Raven Bot", DEFAULT_BRIDGE_BOT_NAME):
+			new_bot = frappe.get_doc("Raven Bot", DEFAULT_BRIDGE_BOT_NAME)
+			if update_settings:
+				settings.bridge_raven_bot = new_bot.name
+				if new_bot.raven_user:
+					settings.bridge_raven_user = new_bot.raven_user
+				settings.save(ignore_permissions=True)
+			result.repaired = True
+			result.reason = "legacy_missing_switched_to_whatsapp"
+			result.bot_after = cstr(settings.get("bridge_raven_bot") or "").strip()
+			result.raven_user_after = cstr(settings.get("bridge_raven_user") or "").strip()
+			return result
+		result.reason = "legacy_bot_missing"
+		result.bot_after = configured_bot
+		result.raven_user_after = configured_raven_user
+		return result
+
+	if frappe.db.exists("Raven Bot", DEFAULT_BRIDGE_BOT_NAME) and configured_bot != DEFAULT_BRIDGE_BOT_NAME:
+		default_bot = frappe.get_doc("Raven Bot", DEFAULT_BRIDGE_BOT_NAME)
+		if update_settings:
+			settings.bridge_raven_bot = default_bot.name
+			if default_bot.raven_user:
+				settings.bridge_raven_user = default_bot.raven_user
+			settings.save(ignore_permissions=True)
+		result.repaired = True
+		result.reason = "legacy_switched_to_existing_whatsapp"
+		result.bot_after = cstr(settings.get("bridge_raven_bot") or "").strip()
+		result.raven_user_after = cstr(settings.get("bridge_raven_user") or "").strip()
+		return result
+
+	legacy_bot = frappe.get_doc("Raven Bot", configured_bot)
+	if cstr(legacy_bot.bot_name or "").strip() not in (
+		LEGACY_DEFAULT_BRIDGE_BOT_NAME,
+		DEFAULT_BRIDGE_BOT_NAME,
+	):
+		result.reason = "legacy_bot_name_not_expected"
+		result.bot_after = configured_bot
+		result.raven_user_after = configured_raven_user
+		return result
+
+	if cstr(legacy_bot.bot_name or "").strip() != DEFAULT_BRIDGE_BOT_NAME:
+		try:
+			legacy_bot.bot_name = DEFAULT_BRIDGE_BOT_NAME
+			legacy_bot.save(ignore_permissions=True)
+		except Exception:
+			result.reason = "failed_update_legacy_bot_name"
+			result.bot_after = configured_bot
+			result.raven_user_after = configured_raven_user
+			return result
+		legacy_bot.reload()
+		if cstr(legacy_bot.bot_name or "").strip() != DEFAULT_BRIDGE_BOT_NAME:
+			result.reason = "legacy_bot_name_not_updated"
+			result.bot_after = configured_bot
+			result.raven_user_after = configured_raven_user
+			return result
+
+	linked_raven_user = cstr(legacy_bot.raven_user or "").strip()
+	if linked_raven_user and frappe.db.exists("Raven User", linked_raven_user):
+		raven_user = frappe.get_doc("Raven User", linked_raven_user)
+		if cstr(raven_user.type or "").strip() == "Bot":
+			if cstr(raven_user.full_name or "").strip() in (
+				"",
+				LEGACY_DEFAULT_BRIDGE_BOT_NAME,
+				DEFAULT_BRIDGE_BOT_NAME,
+			):
+				raven_user.full_name = DEFAULT_BRIDGE_BOT_NAME
+			if cstr(raven_user.first_name or "").strip() in (
+				"",
+				LEGACY_DEFAULT_BRIDGE_BOT_NAME,
+				DEFAULT_BRIDGE_BOT_NAME,
+			):
+				raven_user.first_name = DEFAULT_BRIDGE_BOT_NAME
+			raven_user.enabled = 1
+			raven_user.save(ignore_permissions=True)
+
+	if update_settings:
+		settings.bridge_raven_bot = legacy_bot.name
+		if legacy_bot.raven_user and (
+			not cstr(settings.get("bridge_raven_user") or "").strip()
+			or cstr(settings.get("bridge_raven_user") or "").strip() == LEGACY_DEFAULT_BRIDGE_BOT_NAME
+		):
+			settings.bridge_raven_user = legacy_bot.raven_user
+		settings.save(ignore_permissions=True)
+
+	result.repaired = True
+	result.reason = "legacy_bot_relabelled"
+	result.bot_after = cstr(settings.get("bridge_raven_bot") or "").strip()
+	result.raven_user_after = cstr(settings.get("bridge_raven_user") or "").strip()
+	return result
+
+
+@frappe.whitelist()
+def repair_default_bridge_bot_name() -> dict[str, Any]:
+	"""Admin utility to safely repair legacy default bridge bot naming."""
+	_require_setup_permission()
+	return dict(_repair_default_bridge_bot_name_state(update_settings=True))
+
+
 def _require_setup_permission() -> None:
 	"""Allow bootstrap operations only for privileged setup users."""
 	if frappe.session.user == "Administrator":
@@ -184,7 +328,7 @@ def bootstrap_whatsapp_raven_bridge(
 	)
 
 	workspace_name = cstr(workspace_name or "WhatsApp Bridge Workspace").strip()
-	bridge_bot_name = cstr(bridge_bot_name or "WhatsApp").strip()
+	bridge_bot_name = cstr(bridge_bot_name or DEFAULT_BRIDGE_BOT_NAME).strip()
 	conversation_strategy = cstr(conversation_strategy or "Thread Per Contact").strip()
 	channel_type = cstr(channel_type or "Private").strip()
 
@@ -317,6 +461,10 @@ def bootstrap_whatsapp_raven_bridge(
 		"bot_status": bot_state,
 	}
 
+	# Optional safety repair if this site still points to the legacy default bot.
+	bot_repair = _repair_default_bridge_bot_name_state(settings=settings, update_settings=True)
+	summary.meta["default_bot_repair"] = dict(bot_repair)
+
 	return summary
 
 
@@ -327,6 +475,8 @@ def bootstrap_all_accounts_from_settings() -> dict[str, Any]:
 	settings = get_settings()
 	if not settings:
 		frappe.throw(_("WhatsApp Raven Bridge Settings is missing. Please run migrate first."))
+	legacy_repair = _repair_default_bridge_bot_name_state(settings=settings, update_settings=True)
+	settings.reload()
 
 	workspace_name = _resolve_bootstrap_workspace_name(settings)
 	bridge_bot_name = _resolve_bootstrap_bot_name(settings)
@@ -348,6 +498,7 @@ def bootstrap_all_accounts_from_settings() -> dict[str, Any]:
 	)
 	result["auto_mode"] = "all_accounts_from_settings"
 	result["account_count"] = len(accounts)
+	result["bot_repair"] = dict(legacy_repair)
 	return result
 
 
@@ -511,7 +662,7 @@ def _resolve_bootstrap_bot_name(settings) -> str:
 	configured_bot = cstr(settings.get("bridge_raven_bot") or "").strip()
 	if configured_bot:
 		return configured_bot
-	return "WhatsApp"
+	return DEFAULT_BRIDGE_BOT_NAME
 
 
 def _ensure_bridge_system_user(user_identifier: str | None) -> str | None:

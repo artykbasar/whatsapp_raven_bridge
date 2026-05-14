@@ -28,10 +28,12 @@ def build_whatsapp_origin_message_html(
 	header_text = f"<strong>{escape_html(label)}</strong>"
 	if highlight_header:
 		header_text = f"<mark>{header_text}</mark>"
-	header = f'<p><a href="{escape_html(source_route)}">{header_text}</a></p>'
-	spacer = "<p><br></p>" if highlight_header else ""
+	header_anchor = f'<a href="{escape_html(source_route)}">{header_text}</a>'
+	if highlight_header:
+		return f"<p>{header_anchor}</p>{_render_body_html(body_text)}"
+	header = f"<p>{header_anchor}</p>"
 	body = _render_body_html(body_text)
-	return f"{header}{spacer}{body}"
+	return f"{header}{body}"
 
 
 def build_whatsapp_origin_message_content(header_label: str, body_text: str | None) -> str:
@@ -114,4 +116,7 @@ def _render_body_html(body_text: str | None) -> str:
 	body = cstr(body_text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
 	if not body:
 		return "<p><em>Empty WhatsApp text message</em></p>"
-	return f"<p>{escape_html(body).replace(chr(10), '<br>')}</p>"
+	lines = [escape_html(line) for line in body.split("\n")]
+	if len(lines) == 1:
+		return f"<p>{lines[0]}</p>"
+	return "".join(f"<p>{line or '&nbsp;'}</p>" for line in lines)
