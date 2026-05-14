@@ -97,6 +97,8 @@ Bootstrap does not configure Meta webhook URLs, WhatsApp tokens, or template app
 - Inbound WhatsApp text to Raven
 - Outbound Raven text to WhatsApp
 - Compact WhatsApp-origin Raven message layout with clickable WhatsApp source header
+  - Incoming headers are highlighted for quick visual scan
+  - Outgoing imported/backfilled headers show the best available agent name
 - Historical WhatsApp-to-Raven text backfill with preserved message timestamps
 - One-click backfill preview and full-history sync queue on Bridge Settings
 - Scheduled missed-message reconciliation (lookback + limit based)
@@ -120,6 +122,7 @@ Bootstrap does not configure Meta webhook URLs, WhatsApp tokens, or template app
 
 For WhatsApp-origin mirrored/imported messages, the bridge keeps source mapping in
 **WhatsApp Raven Message Link** and renders a compact clickable header in Raven.
+Incoming headers are highlighted; outgoing imported/backfilled headers are not.
 It does not attach each chat line as a visible WhatsApp Message document card.
 Parent thread/inbox conversation cards remain unchanged.
 

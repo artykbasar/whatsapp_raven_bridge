@@ -175,6 +175,7 @@ def build_raven_text_from_whatsapp(doc, normalized_phone):
 		whatsapp_message_name=doc.name,
 		header_label=incoming_header_label(doc.get("profile_name"), normalized_phone),
 		body_text=doc.get("message"),
+		highlight_header=True,
 	)
 
 

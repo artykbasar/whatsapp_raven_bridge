@@ -22,8 +22,8 @@ from whatsapp_raven_bridge.bridge.raven_destination import ensure_raven_destinat
 from whatsapp_raven_bridge.bridge.whatsapp_message_rendering import (
 	build_whatsapp_origin_message_content,
 	build_whatsapp_origin_message_html,
+	get_outgoing_whatsapp_agent_label,
 	incoming_header_label,
-	outgoing_import_header_label,
 )
 from whatsapp_raven_bridge.utils.settings import get_settings
 
@@ -481,17 +481,19 @@ def refresh_thread_last_message_state(channel_id: str) -> None:
 
 def build_backfill_raven_text(doc, normalized_phone: str, body_text: str) -> str:
 	"""Build safe Raven HTML text for imported historical WhatsApp message."""
+	is_incoming = cstr(doc.get("type")) == "Incoming"
 	return build_whatsapp_origin_message_html(
 		whatsapp_message_name=doc.name,
 		header_label=_get_backfill_header_label(doc, normalized_phone),
 		body_text=body_text,
+		highlight_header=is_incoming,
 	)
 
 
-def _get_backfill_header_label(doc, normalized_phone: str) -> str:
+def _get_backfill_header_label(doc, normalized_phone: str, link=None, raven_message=None) -> str:
 	if cstr(doc.get("type")) == "Incoming":
 		return incoming_header_label(doc.get("profile_name"), normalized_phone)
-	return outgoing_import_header_label()
+	return get_outgoing_whatsapp_agent_label(doc, link=link, raven_message=raven_message)
 
 
 def _extract_whatsapp_body_text(doc) -> str:
@@ -755,11 +757,17 @@ def reformat_existing_whatsapp_origin_raven_messages() -> frappe._dict:
 
 			normalized_phone = normalize_phone_number(whatsapp_message.get("from") or whatsapp_message.get("to"))
 			body_text = _extract_whatsapp_body_text(whatsapp_message)
-			header_label = _get_backfill_header_label(whatsapp_message, normalized_phone)
+			header_label = _get_backfill_header_label(
+				whatsapp_message,
+				normalized_phone,
+				link=link,
+				raven_message=raven_message,
+			)
 			new_text = build_whatsapp_origin_message_html(
 				whatsapp_message_name=whatsapp_message.name,
 				header_label=header_label,
 				body_text=body_text,
+				highlight_header=cstr(whatsapp_message.get("type")) == "Incoming",
 			)
 			new_content = build_whatsapp_origin_message_content(header_label, body_text)
 			if _already_compact_whatsapp_origin_message(raven_message, new_text, new_content):

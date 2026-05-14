@@ -119,7 +119,8 @@ class TestTwoWayMVPHardening(IntegrationTestCase):
 		self.assertFalse(cstr(raven_message.link_document))
 		self.assertEqual(int(raven_message.hide_link_preview or 0), 1)
 		self.assertIn(f'href="/app/whatsapp-message/{incoming.name}"', cstr(raven_message.text))
-		self.assertIn("· WhatsApp", cstr(raven_message.text))
+		self.assertIn("<mark><strong>", cstr(raven_message.text))
+		self.assertIn("· WhatsApp</strong></mark>", cstr(raven_message.text))
 		self.assertEqual(raven_message.channel_id, channel.name)
 		self.assertEqual(cstr(raven_message.message_type), "Text")
 
@@ -155,7 +156,7 @@ class TestTwoWayMVPHardening(IntegrationTestCase):
 		self.assertTrue(link_name)
 		raven_name = frappe.db.get_value("WhatsApp Raven Message Link", link_name, "raven_message")
 		raven_message = frappe.get_doc("Raven Message", raven_name)
-		self.assertIn(f"<strong>{normalized_phone} · WhatsApp</strong>", cstr(raven_message.text))
+		self.assertIn(f"<mark><strong>{normalized_phone} · WhatsApp</strong></mark>", cstr(raven_message.text))
 
 	def test_02_reprocessing_same_whatsapp_message_is_idempotent(self):
 		message_id = self._message_id("02")
