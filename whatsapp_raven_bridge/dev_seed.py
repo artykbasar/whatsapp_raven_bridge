@@ -22,6 +22,14 @@ DEMO_ROUTE_PREFIX = "whatsapp-inbox-wrb-demo"
 DEMO_MESSAGE_ID_PREFIX = "wamid.wrb.demo."
 DEMO_PHONE_PREFIX = "4478709009"
 DEMO_SOURCE = "whatsapp_raven_bridge_demo_seed"
+DEMO_DISPLAY_PREFIX = "Demo "
+DEMO_EXPERIMENT_LABELS = [
+	"STYLE TEST",
+	"TARGET SELF TEST",
+	"TARGET BLANK TEST",
+	"ONCLICK TEST",
+]
+DEMO_INBOX_CHANNEL_FALLBACK = "Raven-whatsapp-inbox-wrb-demo"
 DEMO_TOPICS = [
 	"Sales inquiry",
 	"Support issue",
@@ -61,8 +69,11 @@ def _patched_whatsapp_notify():
 	from frappe_whatsapp.frappe_whatsapp.doctype.whatsapp_message.whatsapp_message import WhatsAppMessage
 
 	original_notify = WhatsAppMessage.notify
+	counter_key = "_wrb_demo_seed_notify_calls"
+	setattr(frappe.flags, counter_key, 0)
 
 	def fake_notify(doc, data):
+		setattr(frappe.flags, counter_key, cint(getattr(frappe.flags, counter_key, 0)) + 1)
 		if not doc.message_id:
 			doc.message_id = f"{DEMO_MESSAGE_ID_PREFIX}{frappe.generate_hash(length=10)}"
 		doc.status = "Success"
@@ -153,30 +164,206 @@ def _set_doc_timestamp(doctype: str, name: str, dt):
 	frappe.clear_document_cache(doctype, name)
 
 
-def _delete_demo_seed_data():
-	for name in frappe.get_all(
-		"WhatsApp Raven Message Link",
-		filters=[["whatsapp_message_id", "like", f"{DEMO_MESSAGE_ID_PREFIX}%"]],
-		pluck="name",
+def _hard_delete_raven_message(name: str):
+	"""Delete Raven Message row directly (dev-only) to avoid Raven hook coupling."""
+	if not name:
+		return
+	frappe.db.sql("delete from `tabRaven Message` where name=%s", (name,))
+	frappe.clear_document_cache("Raven Message", name)
+
+
+def _insert_whatsapp_message_without_notify(payload: dict) -> frappe._dict:
+	"""Insert WhatsApp Message via db_insert to skip DocType hooks/notify (dev-only)."""
+	doc = frappe.get_doc(payload)
+	doc.db_insert(ignore_if_duplicate=False)
+	frappe.clear_document_cache("WhatsApp Message", doc.name)
+	return doc
+
+
+def _demo_parent_label_tokens() -> list[str]:
+	return [f"{DEMO_DISPLAY_PREFIX}{topic}" for topic in DEMO_TOPICS] + list(DEMO_EXPERIMENT_LABELS)
+
+
+def _get_demo_inbox_channels() -> set[str]:
+	channels = {DEMO_INBOX_CHANNEL_FALLBACK}
+	for row in frappe.get_all(
+		"WhatsApp Raven Account Route",
+		filters={"whatsapp_account": DEMO_ACCOUNT_NAME},
+		fields=["inbox_channel"],
 	):
+		channel_name = cstr(row.get("inbox_channel") or "").strip()
+		if channel_name:
+			channels.add(channel_name)
+	return {name for name in channels if name}
+
+
+def _get_demo_conversation_rows() -> list[frappe._dict]:
+	return frappe.db.sql(
+		"""
+		select name, display_name, phone_number, parent_raven_message, raven_channel
+		from `tabWhatsApp Raven Conversation`
+		where whatsapp_account=%s
+			or display_name like %s
+			or phone_number like %s
+		""",
+		(DEMO_ACCOUNT_NAME, f"{DEMO_DISPLAY_PREFIX}%", f"{DEMO_PHONE_PREFIX}%"),
+		as_dict=True,
+	)
+
+
+def _get_demo_parent_messages_from_inbox(inbox_channels: set[str]) -> set[str]:
+	if not inbox_channels:
+		return set()
+	channel_values = sorted(inbox_channels)
+	channel_placeholders = ", ".join(["%s"] * len(channel_values))
+	text_tokens = _demo_parent_label_tokens()
+	text_clauses = " or ".join(["coalesce(rm.text, '') like %s"] * len(text_tokens))
+	text_params = [f"%{token}%" for token in text_tokens]
+	params = channel_values + text_params + [f"%{DEMO_SOURCE}%"]
+	query = f"""
+		select rm.name
+		from `tabRaven Message` rm
+		where rm.channel_id in ({channel_placeholders})
+			and ({text_clauses} or coalesce(rm.json, '') like %s)
+	"""
+	rows = frappe.db.sql(query, tuple(params), as_dict=True)
+	return {cstr(row.get("name") or "").strip() for row in rows if cstr(row.get("name") or "").strip()}
+
+
+def cleanup_demo_raven_parent_messages(inbox_channels: set[str] | None = None) -> dict:
+	"""Delete stale demo parent starter rows from demo inbox channels."""
+	channels = inbox_channels or _get_demo_inbox_channels()
+	parent_names = _get_demo_parent_messages_from_inbox(channels)
+	deleted = 0
+	for name in sorted(parent_names):
+		if not frappe.db.exists("Raven Message", name):
+			continue
+		_hard_delete_raven_message(name)
+		deleted += 1
+	return {
+		"inbox_channels": sorted(channels),
+		"candidates": len(parent_names),
+		"deleted": deleted,
+	}
+
+
+def _delete_demo_seed_data():
+	"""Delete all demo-seeded records, including stale inbox parent starters."""
+	summary = {
+		"message_links_deleted": 0,
+		"whatsapp_messages_deleted": 0,
+		"conversations_deleted": 0,
+		"thread_messages_deleted": 0,
+		"thread_channels_deleted": 0,
+		"parent_messages_deleted": 0,
+	}
+	conversation_rows = _get_demo_conversation_rows()
+	conversation_names = {cstr(row.get("name") or "").strip() for row in conversation_rows if cstr(row.get("name") or "").strip()}
+	thread_channels = {cstr(row.get("raven_channel") or "").strip() for row in conversation_rows if cstr(row.get("raven_channel") or "").strip()}
+	parent_messages = {cstr(row.get("parent_raven_message") or "").strip() for row in conversation_rows if cstr(row.get("parent_raven_message") or "").strip()}
+	inbox_channels = _get_demo_inbox_channels()
+
+	stale_parent_messages = _get_demo_parent_messages_from_inbox(inbox_channels)
+	parent_messages.update(stale_parent_messages)
+	for parent_name in list(parent_messages):
+		if frappe.db.exists("Raven Channel", parent_name) and cint(frappe.db.get_value("Raven Channel", parent_name, "is_thread")):
+			thread_channels.add(parent_name)
+
+	demo_message_names = set(
+		frappe.get_all(
+			"WhatsApp Message",
+			filters=[["message_id", "like", f"{DEMO_MESSAGE_ID_PREFIX}%"]],
+			pluck="name",
+		)
+	)
+	demo_message_names.update(
+		{
+			cstr(row.get("name") or "").strip()
+			for row in frappe.db.sql(
+				"""
+				select name
+				from `tabWhatsApp Message`
+				where whatsapp_account=%s
+					and (coalesce(`from`, '') like %s or coalesce(`to`, '') like %s)
+				""",
+				(DEMO_ACCOUNT_NAME, f"{DEMO_PHONE_PREFIX}%", f"{DEMO_PHONE_PREFIX}%"),
+				as_dict=True,
+			)
+			if cstr(row.get("name") or "").strip()
+		}
+	)
+
+	link_names = set(
+		frappe.get_all(
+			"WhatsApp Raven Message Link",
+			filters=[["whatsapp_message_id", "like", f"{DEMO_MESSAGE_ID_PREFIX}%"]],
+			pluck="name",
+		)
+	)
+	link_names.update(
+		{
+			cstr(row.get("name") or "").strip()
+			for row in frappe.db.sql(
+				"""
+				select name
+				from `tabWhatsApp Raven Message Link`
+				where coalesce(conversation, '') in (
+					select c.name from `tabWhatsApp Raven Conversation` c
+					where c.whatsapp_account=%s
+						or c.display_name like %s
+						or c.phone_number like %s
+				)
+					or coalesce(metadata, '') like %s
+				""",
+				(DEMO_ACCOUNT_NAME, f"{DEMO_DISPLAY_PREFIX}%", f"{DEMO_PHONE_PREFIX}%", f"%{DEMO_SOURCE}%"),
+				as_dict=True,
+			)
+			if cstr(row.get("name") or "").strip()
+		}
+	)
+	if demo_message_names:
+		for row in frappe.get_all(
+			"WhatsApp Raven Message Link",
+			filters=[["whatsapp_message", "in", sorted(demo_message_names)]],
+			pluck="name",
+		):
+			link_names.add(cstr(row or "").strip())
+
+	for name in sorted({lnk for lnk in link_names if lnk}):
 		if frappe.db.exists("WhatsApp Raven Message Link", name):
 			frappe.delete_doc("WhatsApp Raven Message Link", name, force=True)
+			summary["message_links_deleted"] += 1
 
-	for name in frappe.get_all(
-		"WhatsApp Message",
-		filters=[["message_id", "like", f"{DEMO_MESSAGE_ID_PREFIX}%"]],
-		pluck="name",
-	):
+	for thread_channel in sorted({ch for ch in thread_channels if ch}):
+		for row in frappe.get_all("Raven Message", filters={"channel_id": thread_channel}, pluck="name"):
+			if not frappe.db.exists("Raven Message", row):
+				continue
+			_hard_delete_raven_message(row)
+			summary["thread_messages_deleted"] += 1
+		if frappe.db.exists("Raven Channel", thread_channel):
+			frappe.delete_doc("Raven Channel", thread_channel, force=True)
+			summary["thread_channels_deleted"] += 1
+
+	for name in sorted({msg for msg in parent_messages if msg}):
+		if not frappe.db.exists("Raven Message", name):
+			continue
+		_hard_delete_raven_message(name)
+		summary["parent_messages_deleted"] += 1
+
+	parent_cleanup = cleanup_demo_raven_parent_messages(inbox_channels=inbox_channels)
+	summary["parent_messages_deleted"] += cint(parent_cleanup.get("deleted") or 0)
+
+	for name in sorted({msg for msg in demo_message_names if msg}):
 		if frappe.db.exists("WhatsApp Message", name):
 			frappe.delete_doc("WhatsApp Message", name, force=True)
+			summary["whatsapp_messages_deleted"] += 1
 
-	for name in frappe.get_all(
-		"WhatsApp Raven Conversation",
-		filters=[["phone_number", "like", f"{DEMO_PHONE_PREFIX}%"]],
-		pluck="name",
-	):
+	for name in sorted({conv for conv in conversation_names if conv}):
 		if frappe.db.exists("WhatsApp Raven Conversation", name):
 			frappe.delete_doc("WhatsApp Raven Conversation", name, force=True)
+			summary["conversations_deleted"] += 1
+
+	return summary
 
 
 def _remove_thread_system_membership_messages(thread_channel: str):
@@ -200,7 +387,7 @@ def _remove_thread_system_membership_messages(thread_channel: str):
 		if bridge_system_user and owner != bridge_system_user:
 			continue
 		if frappe.db.exists("Raven Message", row.name):
-			frappe.delete_doc("Raven Message", row.name, force=True)
+			_hard_delete_raven_message(row.name)
 
 
 @frappe.whitelist()
@@ -218,8 +405,10 @@ def create_demo_whatsapp_raven_data(
 	conversations = max(1, min(int(conversations or 10), 50))
 	messages_per_conversation = max(1, min(int(messages_per_conversation or 10), 50))
 
+	cleanup_summary = {}
 	if cint(cleanup_existing):
-		_delete_demo_seed_data()
+		cleanup_summary = _delete_demo_seed_data()
+		frappe.db.commit()
 
 	settings = _ensure_bridge_settings()
 	workspace = cstr(settings.default_raven_workspace or "Raven")
@@ -234,6 +423,7 @@ def create_demo_whatsapp_raven_data(
 		"human_replies": 0,
 		"conversation_names": [],
 		"source": DEMO_SOURCE,
+		"cleanup": cleanup_summary,
 	}
 	base_ts = now_datetime() - timedelta(days=7)
 
@@ -287,7 +477,7 @@ def create_demo_whatsapp_raven_data(
 				if slot == 1:
 					if frappe.db.exists("WhatsApp Message", {"message_id": message_id}):
 						continue
-					outgoing = frappe.get_doc(
+					outgoing = _insert_whatsapp_message_without_notify(
 						{
 							"doctype": "WhatsApp Message",
 							"type": "Outgoing",
@@ -299,7 +489,7 @@ def create_demo_whatsapp_raven_data(
 							"status": "Success",
 							"whatsapp_account": DEMO_ACCOUNT_NAME,
 						}
-					).insert(ignore_permissions=True)
+					)
 					_set_doc_timestamp("WhatsApp Message", outgoing.name, ts)
 					summary["outgoing_imported"] += 1
 					summary["seeded_messages"] += 1
@@ -322,7 +512,7 @@ def create_demo_whatsapp_raven_data(
 					frappe.flags.whatsapp_raven_bridge_syncing = previous_syncing
 
 				_set_doc_timestamp("Raven Message", raven_message.name, ts)
-				outgoing = frappe.get_doc(
+				outgoing = _insert_whatsapp_message_without_notify(
 					{
 						"doctype": "WhatsApp Message",
 						"type": "Outgoing",
@@ -336,7 +526,7 @@ def create_demo_whatsapp_raven_data(
 						"reference_doctype": "Raven Message",
 						"reference_name": raven_message.name,
 					}
-				).insert(ignore_permissions=True)
+				)
 				_set_doc_timestamp("WhatsApp Message", outgoing.name, ts)
 				create_message_link(
 					whatsapp_message=outgoing.name,
@@ -365,4 +555,5 @@ def create_demo_whatsapp_raven_data(
 			)
 			_remove_thread_system_membership_messages(conversation.raven_channel)
 
+	summary["notify_calls"] = cint(getattr(frappe.flags, "_wrb_demo_seed_notify_calls", 0))
 	return summary
