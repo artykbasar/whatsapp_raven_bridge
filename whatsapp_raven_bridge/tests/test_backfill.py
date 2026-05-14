@@ -132,8 +132,9 @@ class TestHistoricalBackfill(IntegrationTestCase):
 		self.assertFalse(cstr(raven_message.link_document))
 		self.assertEqual(int(raven_message.hide_link_preview or 0), 1)
 		self.assertIn(f'href="/app/whatsapp-message/{msg.name}"', cstr(raven_message.text))
-		self.assertIn("<mark><strong>", cstr(raven_message.text))
-		self.assertIn("· WhatsApp</strong></mark>", cstr(raven_message.text))
+		self.assertIn("<mark><strong>WARB4H Customer</strong></mark>", cstr(raven_message.text))
+		self.assertNotIn("· WhatsApp", cstr(raven_message.text))
+		self.assertIn("<p><br></p>", cstr(raven_message.text))
 
 	def test_c_outgoing_history_import_does_not_notify_or_create_second_outgoing_message(self):
 		source_dt = datetime(2026, 1, 11, 14, 0, 0)
@@ -158,8 +159,9 @@ class TestHistoricalBackfill(IntegrationTestCase):
 		self.assertFalse(cstr(raven_message.link_doctype))
 		self.assertFalse(cstr(raven_message.link_document))
 		self.assertEqual(int(raven_message.hide_link_preview or 0), 1)
-		self.assertIn("<strong>Agent · WhatsApp</strong>", cstr(raven_message.text))
-		self.assertNotIn("<mark><strong>Agent · WhatsApp</strong></mark>", cstr(raven_message.text))
+		self.assertIn("<strong>Agent</strong>", cstr(raven_message.text))
+		self.assertNotIn("· WhatsApp", cstr(raven_message.text))
+		self.assertNotIn("<mark><strong>Agent</strong></mark>", cstr(raven_message.text))
 		self.assertIn(f'href="/app/whatsapp-message/{msg.name}"', cstr(raven_message.text))
 		self.assertFalse(
 			frappe.db.exists(
@@ -181,9 +183,10 @@ class TestHistoricalBackfill(IntegrationTestCase):
 		self.assertTrue(link_name)
 		raven_message_name = frappe.db.get_value("WhatsApp Raven Message Link", link_name, "raven_message")
 		raven_message = frappe.get_doc("Raven Message", raven_message_name)
-		self.assertIn("<strong>Artyk Basar · WhatsApp</strong>", cstr(raven_message.text))
-		self.assertNotIn("<mark><strong>Artyk Basar · WhatsApp</strong></mark>", cstr(raven_message.text))
-		self.assertNotIn("<strong>Agent · WhatsApp</strong>", cstr(raven_message.text))
+		self.assertIn("<strong>Artyk Basar</strong>", cstr(raven_message.text))
+		self.assertNotIn("· WhatsApp", cstr(raven_message.text))
+		self.assertNotIn("<mark><strong>Artyk Basar</strong></mark>", cstr(raven_message.text))
+		self.assertNotIn("<strong>Agent</strong>", cstr(raven_message.text))
 
 	def test_d_idempotency_skips_existing_links_and_message_ids(self):
 		msg = self._insert_whatsapp_incoming("d01", "idempotency source")
@@ -250,6 +253,10 @@ class TestHistoricalBackfill(IntegrationTestCase):
 		self.assertEqual(int(rm2.hide_link_preview or 0), 1)
 		self.assertIn("<mark><strong>", cstr(rm1.text))
 		self.assertIn("<mark><strong>", cstr(rm2.text))
+		self.assertIn("<p><br></p>", cstr(rm1.text))
+		self.assertIn("<p><br></p>", cstr(rm2.text))
+		self.assertNotIn("· WhatsApp", cstr(rm1.text))
+		self.assertNotIn("· WhatsApp", cstr(rm2.text))
 		self.assertIn(f'href="/app/whatsapp-message/{msg1.name}"', cstr(rm1.text))
 		self.assertIn(f'href="/app/whatsapp-message/{msg2.name}"', cstr(rm2.text))
 
@@ -765,7 +772,9 @@ class TestHistoricalBackfill(IntegrationTestCase):
 		self.assertFalse(cstr(incoming_rm.link_doctype))
 		self.assertFalse(cstr(incoming_rm.link_document))
 		self.assertEqual(int(incoming_rm.hide_link_preview or 0), 1)
-		self.assertIn("<mark><strong>WARB4H Customer · WhatsApp</strong></mark>", cstr(incoming_rm.text))
+		self.assertIn("<mark><strong>WARB4H Customer</strong></mark>", cstr(incoming_rm.text))
+		self.assertIn("<p><br></p>", cstr(incoming_rm.text))
+		self.assertNotIn("· WhatsApp", cstr(incoming_rm.text))
 		self.assertIn(f'href="/app/whatsapp-message/{incoming.name}"', cstr(incoming_rm.text))
 		self.assertEqual(get_datetime(incoming_rm.creation), incoming_creation)
 		self.assertEqual(get_datetime(incoming_rm.modified), incoming_modified)
@@ -773,8 +782,9 @@ class TestHistoricalBackfill(IntegrationTestCase):
 		self.assertFalse(cstr(outgoing_rm.link_doctype))
 		self.assertFalse(cstr(outgoing_rm.link_document))
 		self.assertEqual(int(outgoing_rm.hide_link_preview or 0), 1)
-		self.assertIn("<strong>Agent · WhatsApp</strong>", cstr(outgoing_rm.text))
-		self.assertNotIn("<mark><strong>Agent · WhatsApp</strong></mark>", cstr(outgoing_rm.text))
+		self.assertIn("<strong>Agent</strong>", cstr(outgoing_rm.text))
+		self.assertNotIn("· WhatsApp", cstr(outgoing_rm.text))
+		self.assertNotIn("<mark><strong>Agent</strong></mark>", cstr(outgoing_rm.text))
 		self.assertIn(f'href="/app/whatsapp-message/{outgoing.name}"', cstr(outgoing_rm.text))
 		self.assertEqual(get_datetime(outgoing_rm.creation), outgoing_creation)
 		self.assertEqual(get_datetime(outgoing_rm.modified), outgoing_modified)
@@ -878,9 +888,10 @@ class TestHistoricalBackfill(IntegrationTestCase):
 
 		reformat_existing_whatsapp_origin_raven_messages()
 		raven_message = frappe.get_doc("Raven Message", raven_message_name)
-		self.assertIn("<strong>Artyk Basar · WhatsApp</strong>", cstr(raven_message.text))
-		self.assertNotIn("<mark><strong>Artyk Basar · WhatsApp</strong></mark>", cstr(raven_message.text))
-		self.assertNotIn("<strong>Agent · WhatsApp</strong>", cstr(raven_message.text))
+		self.assertIn("<strong>Artyk Basar</strong>", cstr(raven_message.text))
+		self.assertNotIn("· WhatsApp", cstr(raven_message.text))
+		self.assertNotIn("<mark><strong>Artyk Basar</strong></mark>", cstr(raven_message.text))
+		self.assertNotIn("<strong>Agent</strong>", cstr(raven_message.text))
 
 	@classmethod
 	def _snapshot_settings(cls):

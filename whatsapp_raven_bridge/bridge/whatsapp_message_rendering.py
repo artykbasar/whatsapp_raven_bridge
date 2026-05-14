@@ -25,12 +25,13 @@ def build_whatsapp_origin_message_html(
 	"""Build compact Raven HTML with clickable WhatsApp source header and message body."""
 	source_route = desk_whatsapp_message_route(whatsapp_message_name)
 	label = cstr(header_label or "").strip() or "Unknown WhatsApp Contact"
-	header_text = f"<strong>{escape_html(label)} · WhatsApp</strong>"
+	header_text = f"<strong>{escape_html(label)}</strong>"
 	if highlight_header:
 		header_text = f"<mark>{header_text}</mark>"
 	header = f'<p><a href="{escape_html(source_route)}">{header_text}</a></p>'
+	spacer = "<p><br></p>" if highlight_header else ""
 	body = _render_body_html(body_text)
-	return f"{header}{body}"
+	return f"{header}{spacer}{body}"
 
 
 def build_whatsapp_origin_message_content(header_label: str, body_text: str | None) -> str:
@@ -39,7 +40,7 @@ def build_whatsapp_origin_message_content(header_label: str, body_text: str | No
 	body = cstr(body_text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
 	if not body:
 		body = "Empty WhatsApp text message"
-	return f"{label} · WhatsApp\n{body}"
+	return f"{label}\n{body}"
 
 
 def incoming_header_label(profile_name: str | None, normalized_phone: str | None) -> str:

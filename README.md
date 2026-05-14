@@ -74,7 +74,7 @@ You can bootstrap most bridge records after at least one WhatsApp Account exists
 frappe.call(
 	"whatsapp_raven_bridge.api.setup.bootstrap_whatsapp_raven_bridge",
 	workspace_name="WhatsApp Support",
-	bridge_bot_name="WhatsApp Bridge Bot",
+	bridge_bot_name="WhatsApp",
 	bridge_system_user="whatsapp-bridge-service@example.com",
 	whatsapp_accounts=["My WhatsApp Account"],
 	route_members=[{"raven_user": "Administrator", "is_admin": 1, "can_reply": 1}],
@@ -125,6 +125,8 @@ For WhatsApp-origin mirrored/imported messages, the bridge keeps source mapping 
 Incoming headers are highlighted; outgoing imported/backfilled headers are not.
 It does not attach each chat line as a visible WhatsApp Message document card.
 Parent thread/inbox conversation cards remain unchanged.
+
+Recommended bot display name is `WhatsApp`; Raven adds its own bot badge in UI.
 
 ## Documentation
 

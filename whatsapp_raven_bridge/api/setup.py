@@ -184,7 +184,7 @@ def bootstrap_whatsapp_raven_bridge(
 	)
 
 	workspace_name = cstr(workspace_name or "WhatsApp Bridge Workspace").strip()
-	bridge_bot_name = cstr(bridge_bot_name or "WhatsApp Bridge Bot").strip()
+	bridge_bot_name = cstr(bridge_bot_name or "WhatsApp").strip()
 	conversation_strategy = cstr(conversation_strategy or "Thread Per Contact").strip()
 	channel_type = cstr(channel_type or "Private").strip()
 
@@ -511,7 +511,7 @@ def _resolve_bootstrap_bot_name(settings) -> str:
 	configured_bot = cstr(settings.get("bridge_raven_bot") or "").strip()
 	if configured_bot:
 		return configured_bot
-	return "WhatsApp Bridge Bot"
+	return "WhatsApp"
 
 
 def _ensure_bridge_system_user(user_identifier: str | None) -> str | None:

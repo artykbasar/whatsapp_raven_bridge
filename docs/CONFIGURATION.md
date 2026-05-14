@@ -99,3 +99,5 @@ Desk-friendly setup is available from **WhatsApp Raven Bridge Settings**:
 - `bridge_raven_user`: Raven sender identity for mirrored inbound WhatsApp messages.
 
 They serve different purposes and should both be configured.
+
+Recommended bot display name is `WhatsApp` so Raven UI shows `WhatsApp Bot` with its native badge.
