@@ -179,6 +179,30 @@ def _delete_demo_seed_data():
 			frappe.delete_doc("WhatsApp Raven Conversation", name, force=True)
 
 
+def _remove_thread_system_membership_messages(thread_channel: str):
+	"""Remove Raven member-add system rows from demo threads to keep deterministic counts."""
+	if not thread_channel:
+		return
+	bridge_system_user = cstr(get_settings().bridge_system_user or "").strip()
+	candidates = frappe.get_all(
+		"Raven Message",
+		filters={"channel_id": thread_channel},
+		fields=["name", "owner", "text", "json"],
+	)
+	for row in candidates:
+		text = cstr(row.get("text") or "").strip()
+		metadata = cstr(row.get("json") or "").strip()
+		owner = cstr(row.get("owner") or "").strip()
+		if metadata:
+			continue
+		if not text.startswith("None added "):
+			continue
+		if bridge_system_user and owner != bridge_system_user:
+			continue
+		if frappe.db.exists("Raven Message", row.name):
+			frappe.delete_doc("Raven Message", row.name, force=True)
+
+
 @frappe.whitelist()
 def create_demo_whatsapp_raven_data(
 	conversations: int = 10,
@@ -339,5 +363,6 @@ def create_demo_whatsapp_raven_data(
 				preserve_raven_timestamps=1,
 				scheduled=0,
 			)
+			_remove_thread_system_membership_messages(conversation.raven_channel)
 
 	return summary
