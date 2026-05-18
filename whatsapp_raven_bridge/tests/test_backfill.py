@@ -1041,6 +1041,225 @@ class TestHistoricalBackfill(IntegrationTestCase):
 		self.assertNotIn("<mark><strong>Artyk Basar</strong></mark>", cstr(raven_message.text))
 		self.assertNotIn("<strong>Agent</strong>", cstr(raven_message.text))
 
+	def test_z1_reformat_repairs_linked_old_incoming_without_new_metadata(self):
+		incoming = self._insert_whatsapp_incoming("z11", "legacy link incoming")
+		backfill_whatsapp_messages(whatsapp_account=self.ACCOUNT_NAME, dry_run=0, limit=50)
+		link_name = frappe.db.get_value("WhatsApp Raven Message Link", {"whatsapp_message": incoming.name}, "name")
+		self.assertTrue(link_name)
+		link = frappe.get_doc("WhatsApp Raven Message Link", link_name)
+		raven_name = cstr(link.raven_message)
+		self.assertTrue(raven_name)
+
+		frappe.db.set_value(
+			"WhatsApp Raven Message Link",
+			link.name,
+			{"metadata": None},
+			update_modified=False,
+		)
+		frappe.db.set_value(
+			"Raven Message",
+			raven_name,
+			{
+				"text": f'<p><strong>{self.PREFIX} Customer · WhatsApp</strong></p><p>thank you</p>',
+				"content": "legacy incoming stale",
+				"json": None,
+				"hide_link_preview": 0,
+				"link_doctype": "WhatsApp Message",
+				"link_document": incoming.name,
+			},
+			update_modified=False,
+		)
+
+		result = reformat_existing_whatsapp_origin_raven_messages()
+		self.assertGreaterEqual(int(result.get("reformatted") or 0), 1)
+		raven_message = frappe.get_doc("Raven Message", raven_name)
+		self.assertIn("<mark><strong>WARB4H Customer</strong></mark>", cstr(raven_message.text))
+		self.assertNotIn("· WhatsApp", cstr(raven_message.text))
+		self.assertEqual(int(raven_message.hide_link_preview or 0), 1)
+		self.assertFalse(cstr(raven_message.link_doctype))
+		self.assertFalse(cstr(raven_message.link_document))
+
+	def test_z2_reformat_repairs_legacy_link_doctype_without_message_link(self):
+		seed = self._insert_whatsapp_incoming("z20", "seed for channel")
+		backfill_whatsapp_messages(whatsapp_account=self.ACCOUNT_NAME, dry_run=0, limit=50)
+		conversation_name = frappe.db.get_value(
+			"WhatsApp Raven Conversation",
+			{"whatsapp_account": self.ACCOUNT_NAME, "phone_number": "447744100001"},
+			"name",
+		)
+		self.assertTrue(conversation_name)
+		conversation = frappe.get_doc("WhatsApp Raven Conversation", conversation_name)
+		self.assertTrue(seed.name)
+
+		legacy_source = self._insert_whatsapp_incoming("z21", "legacy link_doctype fallback")
+		legacy_raven = frappe.get_doc(
+			{
+				"doctype": "Raven Message",
+				"channel_id": conversation.raven_channel,
+				"message_type": "Text",
+				"text": "<p><strong>WARB4H Customer · WhatsApp</strong></p><p>legacy fallback</p>",
+				"content": "legacy fallback",
+				"is_bot_message": 1,
+				"hide_link_preview": 0,
+				"link_doctype": "WhatsApp Message",
+				"link_document": legacy_source.name,
+				"json": {},
+			}
+		).insert(ignore_permissions=True)
+		self.assertFalse(
+			frappe.db.exists(
+				"WhatsApp Raven Message Link",
+				{"raven_message": legacy_raven.name},
+			)
+		)
+
+		result = reformat_existing_whatsapp_origin_raven_messages()
+		self.assertGreaterEqual(int(result.get("scanned_legacy_linked_messages") or 0), 1)
+		legacy_raven.reload()
+		self.assertIn("<mark><strong>WARB4H Customer</strong></mark>", cstr(legacy_raven.text))
+		self.assertNotIn("· WhatsApp", cstr(legacy_raven.text))
+		self.assertEqual(int(legacy_raven.hide_link_preview or 0), 1)
+		self.assertFalse(cstr(legacy_raven.link_doctype))
+		self.assertFalse(cstr(legacy_raven.link_document))
+
+	def test_z3_reformat_resolves_whatsapp_message_from_message_id_when_name_missing(self):
+		incoming = self._insert_whatsapp_incoming("z31", "resolve by message id")
+		backfill_whatsapp_messages(whatsapp_account=self.ACCOUNT_NAME, dry_run=0, limit=50)
+		link_name = frappe.db.get_value("WhatsApp Raven Message Link", {"whatsapp_message": incoming.name}, "name")
+		link = frappe.get_doc("WhatsApp Raven Message Link", link_name)
+		raven_name = cstr(link.raven_message)
+
+		frappe.db.set_value(
+			"WhatsApp Raven Message Link",
+			link.name,
+			{
+				"whatsapp_message": None,
+				"whatsapp_message_id": incoming.message_id,
+				"metadata": None,
+			},
+			update_modified=False,
+		)
+		frappe.db.set_value(
+			"Raven Message",
+			raven_name,
+			{
+				"text": f'<p><strong>{self.PREFIX} Customer · WhatsApp</strong></p><p>legacy message id</p>',
+				"content": "legacy message id",
+				"hide_link_preview": 0,
+				"link_doctype": "WhatsApp Message",
+				"link_document": incoming.name,
+			},
+			update_modified=False,
+		)
+
+		result = reformat_existing_whatsapp_origin_raven_messages()
+		self.assertGreaterEqual(int(result.get("reformatted") or 0), 1)
+		raven_message = frappe.get_doc("Raven Message", raven_name)
+		self.assertIn("<mark><strong>WARB4H Customer</strong></mark>", cstr(raven_message.text))
+		self.assertNotIn("· WhatsApp", cstr(raven_message.text))
+		self.assertFalse(cstr(raven_message.link_doctype))
+		self.assertFalse(cstr(raven_message.link_document))
+
+	def test_z4_reformat_skips_manual_human_message_with_old_suffix(self):
+		self._insert_whatsapp_incoming("z40", "seed for thread")
+		backfill_whatsapp_messages(whatsapp_account=self.ACCOUNT_NAME, dry_run=0, limit=50)
+		conversation_name = frappe.db.get_value(
+			"WhatsApp Raven Conversation",
+			{"whatsapp_account": self.ACCOUNT_NAME, "phone_number": "447744100001"},
+			"name",
+		)
+		conversation = frappe.get_doc("WhatsApp Raven Conversation", conversation_name)
+		source = self._insert_whatsapp_incoming("z41", "manual-like source")
+		manual_text = "<p><strong>Manual Test · WhatsApp</strong></p><p>typed by human</p>"
+		manual_raven = frappe.get_doc(
+			{
+				"doctype": "Raven Message",
+				"channel_id": conversation.raven_channel,
+				"message_type": "Text",
+				"text": manual_text,
+				"content": "typed by human",
+				"is_bot_message": 0,
+				"hide_link_preview": 0,
+				"link_doctype": "WhatsApp Message",
+				"link_document": source.name,
+				"json": {},
+			}
+		).insert(ignore_permissions=True)
+		frappe.db.set_value(
+			"Raven Message",
+			manual_raven.name,
+			{"owner": self.AGENT_USER, "modified_by": self.AGENT_USER},
+			update_modified=False,
+		)
+
+		result = reformat_existing_whatsapp_origin_raven_messages()
+		self.assertGreaterEqual(int(result.get("skipped_manual_user_message") or 0), 1)
+		manual_raven.reload()
+		self.assertEqual(cstr(manual_raven.text), manual_text)
+		self.assertEqual(cstr(manual_raven.link_doctype), "WhatsApp Message")
+		self.assertEqual(cstr(manual_raven.link_document), source.name)
+
+	def test_z5_reformat_dry_run_returns_candidates_without_writing(self):
+		incoming = self._insert_whatsapp_incoming("z51", "dry run candidate")
+		backfill_whatsapp_messages(whatsapp_account=self.ACCOUNT_NAME, dry_run=0, limit=50)
+		link_name = frappe.db.get_value("WhatsApp Raven Message Link", {"whatsapp_message": incoming.name}, "name")
+		raven_name = frappe.db.get_value("WhatsApp Raven Message Link", link_name, "raven_message")
+		old_text = f'<p><strong>{self.PREFIX} Customer · WhatsApp</strong></p><p>dry run keep</p>'
+		frappe.db.set_value(
+			"Raven Message",
+			raven_name,
+			{
+				"text": old_text,
+				"content": "dry run keep",
+				"hide_link_preview": 0,
+				"link_doctype": "WhatsApp Message",
+				"link_document": incoming.name,
+			},
+			update_modified=False,
+		)
+
+		result = reformat_existing_whatsapp_origin_raven_messages(dry_run=1, limit=None)
+		self.assertEqual(int(result.get("dry_run") or 0), 1)
+		self.assertEqual(int(result.get("reformatted") or 0), 0)
+		self.assertTrue(any(row.get("raven_message") == raven_name for row in result.get("sample") or []))
+
+		raven_message = frappe.get_doc("Raven Message", raven_name)
+		self.assertEqual(cstr(raven_message.text), old_text)
+		self.assertEqual(cstr(raven_message.link_doctype), "WhatsApp Message")
+		self.assertEqual(cstr(raven_message.link_document), incoming.name)
+
+	def test_z6_reformat_skips_parent_thread_messages(self):
+		self._insert_whatsapp_incoming("z60", "parent skip seed")
+		parent_source = self._insert_whatsapp_incoming("z61", "parent skip source")
+		backfill_whatsapp_messages(whatsapp_account=self.ACCOUNT_NAME, dry_run=0, limit=50)
+		conversation_name = frappe.db.get_value(
+			"WhatsApp Raven Conversation",
+			{"whatsapp_account": self.ACCOUNT_NAME, "phone_number": "447744100001"},
+			"name",
+		)
+		conversation = frappe.get_doc("WhatsApp Raven Conversation", conversation_name)
+		parent_message = frappe.get_doc("Raven Message", conversation.parent_raven_message)
+		parent_text = "<p><strong>Demo Parent · WhatsApp</strong></p><p>keep parent path</p>"
+		frappe.db.set_value(
+			"Raven Message",
+			parent_message.name,
+			{
+				"text": parent_text,
+				"content": "keep parent path",
+				"hide_link_preview": 0,
+				"link_doctype": "WhatsApp Message",
+				"link_document": parent_source.name,
+			},
+			update_modified=False,
+		)
+
+		result = reformat_existing_whatsapp_origin_raven_messages()
+		self.assertGreaterEqual(int(result.get("skipped_parent_message") or 0), 1)
+		parent_message.reload()
+		self.assertEqual(cstr(parent_message.text), parent_text)
+		self.assertEqual(cstr(parent_message.link_doctype), "WhatsApp Message")
+		self.assertEqual(cstr(parent_message.link_document), parent_source.name)
+
 	@classmethod
 	def _snapshot_settings(cls):
 		settings = frappe.get_single("WhatsApp Raven Bridge Settings")
