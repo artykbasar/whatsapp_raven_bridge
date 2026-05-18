@@ -173,10 +173,15 @@ def enqueue_sync_all_message_history() -> dict[str, Any]:
 
 
 @frappe.whitelist()
-def reformat_existing_whatsapp_origin_raven_messages() -> dict[str, Any]:
+def reformat_existing_whatsapp_origin_raven_messages(dry_run: int = 0, limit: int | None = None) -> dict[str, Any]:
 	"""Repair older bridge-created WhatsApp-origin Raven messages to the compact chat format."""
 	_require_backfill_permission()
-	return dict(reformat_existing_whatsapp_origin_raven_messages_internal())
+	return dict(
+		reformat_existing_whatsapp_origin_raven_messages_internal(
+			dry_run=dry_run,
+			limit=limit,
+		)
+	)
 
 
 @frappe.whitelist()

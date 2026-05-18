@@ -26,7 +26,7 @@ from whatsapp_raven_bridge.bridge.whatsapp_message_rendering import (
 	get_outgoing_whatsapp_agent_label,
 	incoming_header_label,
 )
-from whatsapp_raven_bridge.utils.settings import get_settings
+from whatsapp_raven_bridge.utils.settings import get_bridge_system_user, get_settings
 
 BACKFILL_LOCK_KEY = "whatsapp_raven_bridge:historical_backfill_lock"
 BACKFILL_LOCK_TIMEOUT_SECONDS = 30 * 60
@@ -710,50 +710,106 @@ def _build_preview_diagnostics() -> dict[str, Any]:
 	}
 
 
-def reformat_existing_whatsapp_origin_raven_messages() -> frappe._dict:
-	"""Rewrite old bridge-created WhatsApp-origin Raven messages into compact clickable format."""
+def reformat_existing_whatsapp_origin_raven_messages(
+	dry_run: int = 0,
+	limit: int | None = None,
+) -> frappe._dict:
+	"""Rewrite legacy WhatsApp-origin Raven messages into compact clickable format."""
+	dry_run = 1 if cint(dry_run) else 0
+	limit = _normalize_reformat_limit(limit)
 	summary = frappe._dict(
 		{
+			"dry_run": dry_run,
+			"limit": limit,
 			"scanned_links": 0,
+			"scanned_legacy_linked_messages": 0,
 			"reformatted": 0,
 			"skipped_human_reply": 0,
+			"skipped_parent_message": 0,
 			"skipped_missing_raven_message": 0,
 			"skipped_missing_whatsapp_message": 0,
+			"skipped_manual_user_message": 0,
 			"skipped_unrelated": 0,
+			"sample": [],
 			"errors": [],
 		}
 	)
 	touched_channels = set()
+	bridge_system_user = cstr(get_bridge_system_user() or "").strip()
+
 	links = frappe.get_all(
 		"WhatsApp Raven Message Link",
-		filters=[
-			["raven_message", "is", "set"],
-			["whatsapp_message", "is", "set"],
+		filters=[["raven_message", "is", "set"]],
+		fields=[
+			"name",
+			"direction",
+			"is_backfilled",
+			"raven_message",
+			"whatsapp_message",
+			"whatsapp_message_id",
+			"metadata",
 		],
-		fields=["name", "direction", "is_backfilled", "raven_message", "whatsapp_message", "metadata"],
 	)
 	summary.scanned_links = len(links)
-	message_meta = frappe.get_meta("Raven Message")
-
+	candidates_by_raven: dict[str, frappe._dict] = {}
 	for link in links:
+		raven_name = cstr(link.get("raven_message") or "").strip()
+		if not raven_name or raven_name in candidates_by_raven:
+			continue
+		candidates_by_raven[raven_name] = frappe._dict(
+			{"source_kind": "message_link", "link": link, "legacy_row": None}
+		)
+
+	legacy_rows = frappe.get_all(
+		"Raven Message",
+		filters=[
+			["link_doctype", "=", "WhatsApp Message"],
+			["link_document", "is", "set"],
+		],
+		fields=["name", "link_document", "is_bot_message", "owner", "json", "text"],
+	)
+	summary.scanned_legacy_linked_messages = len(legacy_rows)
+	for row in legacy_rows:
+		raven_name = cstr(row.get("name") or "").strip()
+		if not raven_name or raven_name in candidates_by_raven:
+			continue
+		candidates_by_raven[raven_name] = frappe._dict(
+			{"source_kind": "legacy_link_doctype", "link": None, "legacy_row": row}
+		)
+
+	message_meta = frappe.get_meta("Raven Message")
+	processed = 0
+	for raven_name in sorted(candidates_by_raven):
+		if limit is not None and processed >= limit:
+			break
+		processed += 1
+		candidate = candidates_by_raven[raven_name]
+		link = candidate.get("link")
+		legacy_row = candidate.get("legacy_row")
 		try:
-			raven_name = cstr(link.get("raven_message") or "").strip()
-			whatsapp_name = cstr(link.get("whatsapp_message") or "").strip()
-			if not raven_name or not frappe.db.exists("Raven Message", raven_name):
+			if not frappe.db.exists("Raven Message", raven_name):
 				summary.skipped_missing_raven_message += 1
-				continue
-			if not whatsapp_name or not frappe.db.exists("WhatsApp Message", whatsapp_name):
-				summary.skipped_missing_whatsapp_message += 1
 				continue
 
 			raven_message = frappe.get_doc("Raven Message", raven_name)
-			whatsapp_message = frappe.get_doc("WhatsApp Message", whatsapp_name)
+			if _is_parent_thread_message(raven_message):
+				summary.skipped_parent_message += 1
+				continue
 
-			if not _is_rewritable_whatsapp_origin_row(link, raven_message):
-				if _looks_like_human_reply(link, raven_message):
-					summary.skipped_human_reply += 1
-				else:
-					summary.skipped_unrelated += 1
+			whatsapp_message, resolution_reason = _resolve_whatsapp_message_for_reformat(link=link, legacy_row=legacy_row)
+			if not whatsapp_message:
+				summary.skipped_missing_whatsapp_message += 1
+				continue
+
+			safety = _classify_reformat_candidate(
+				raven_message=raven_message,
+				link=link,
+				whatsapp_message=whatsapp_message,
+				bridge_system_user=bridge_system_user,
+				source_kind=cstr(candidate.get("source_kind") or ""),
+			)
+			if safety != "rewrite":
+				summary[safety] = int(summary.get(safety) or 0) + 1
 				continue
 
 			normalized_phone = normalize_phone_number(whatsapp_message.get("from") or whatsapp_message.get("to"))
@@ -775,6 +831,20 @@ def reformat_existing_whatsapp_origin_raven_messages() -> frappe._dict:
 				summary.skipped_unrelated += 1
 				continue
 
+			if dry_run:
+				if len(summary.sample) < 25:
+					summary.sample.append(
+						{
+							"raven_message": raven_message.name,
+							"whatsapp_message": whatsapp_message.name,
+							"detected_direction": _detect_candidate_direction(link, whatsapp_message),
+							"reason": cstr(candidate.get("source_kind") or resolution_reason or "resolved"),
+							"old_text_preview": cstr(raven_message.get("text") or "")[:280],
+							"new_text_preview": cstr(new_text)[:280],
+						}
+					)
+				continue
+
 			updates: dict[str, Any] = {
 				"text": new_text,
 				"hide_link_preview": 1,
@@ -792,17 +862,139 @@ def reformat_existing_whatsapp_origin_raven_messages() -> frappe._dict:
 		except Exception:
 			summary.errors.append(
 				{
-					"link": cstr(link.get("name") or "").strip(),
-					"raven_message": cstr(link.get("raven_message") or "").strip(),
-					"whatsapp_message": cstr(link.get("whatsapp_message") or "").strip(),
+					"link": cstr((link or {}).get("name") or "").strip(),
+					"raven_message": cstr(raven_name or "").strip(),
+					"whatsapp_message": cstr((link or {}).get("whatsapp_message") or cstr((legacy_row or {}).get("link_document") or "")).strip(),
 					"error": frappe.get_traceback(),
 				}
 			)
 
-	for channel_id in sorted(touched_channels):
-		refresh_thread_last_message_state(channel_id)
+	if not dry_run:
+		for channel_id in sorted(touched_channels):
+			refresh_thread_last_message_state(channel_id)
 
 	return summary
+
+
+def _normalize_reformat_limit(limit: int | None) -> int | None:
+	if limit is None:
+		return None
+	try:
+		value = int(limit)
+	except Exception:
+		return None
+	return max(1, value)
+
+
+def _resolve_whatsapp_message_for_reformat(link=None, legacy_row=None):
+	whatsapp_name = cstr((link or {}).get("whatsapp_message") or "").strip()
+	if whatsapp_name and frappe.db.exists("WhatsApp Message", whatsapp_name):
+		return frappe.get_doc("WhatsApp Message", whatsapp_name), "link.whatsapp_message"
+
+	whatsapp_message_id = cstr((link or {}).get("whatsapp_message_id") or "").strip()
+	if whatsapp_message_id:
+		resolved_name = frappe.db.get_value("WhatsApp Message", {"message_id": whatsapp_message_id}, "name")
+		if resolved_name and frappe.db.exists("WhatsApp Message", resolved_name):
+			return frappe.get_doc("WhatsApp Message", resolved_name), "link.whatsapp_message_id"
+
+	legacy_whatsapp_name = cstr((legacy_row or {}).get("link_document") or "").strip()
+	if legacy_whatsapp_name and frappe.db.exists("WhatsApp Message", legacy_whatsapp_name):
+		return frappe.get_doc("WhatsApp Message", legacy_whatsapp_name), "legacy.link_document"
+
+	return None, None
+
+
+def _is_parent_thread_message(raven_message) -> bool:
+	if cstr(raven_message.get("link_doctype") or "").strip() == "WhatsApp Raven Conversation":
+		return True
+	metadata = _as_dict(raven_message.get("json"))
+	if cstr(metadata.get("purpose") or "").strip().lower() == "thread_parent":
+		return True
+	if cint(raven_message.get("is_thread")):
+		channel_id = cstr(raven_message.get("channel_id") or "").strip()
+		if channel_id and channel_id != cstr(raven_message.get("name") or "").strip():
+			return True
+	if frappe.db.exists("WhatsApp Raven Conversation", {"parent_raven_message": raven_message.name}):
+		return True
+	return False
+
+
+def _contains_old_whatsapp_suffix(raven_message) -> bool:
+	return "· WhatsApp" in cstr(raven_message.get("text") or "")
+
+
+def _is_real_human_actor(user_id: str | None, bridge_system_user: str | None) -> bool:
+	value = cstr(user_id or "").strip()
+	if not value:
+		return False
+	if value in ("Guest", "Administrator"):
+		return False
+	if bridge_system_user and value == bridge_system_user:
+		return False
+	return True
+
+
+def _classify_reformat_candidate(
+	*,
+	raven_message,
+	link,
+	whatsapp_message,
+	bridge_system_user: str,
+	source_kind: str,
+) -> str:
+	if _is_parent_thread_message(raven_message):
+		return "skipped_parent_message"
+
+	raven_metadata = _as_dict(raven_message.get("json"))
+	link_metadata = _as_dict((link or {}).get("metadata"))
+	is_bot = cint(raven_message.get("is_bot_message"))
+	has_whatsapp_meta = _metadata_indicates_whatsapp_origin(raven_metadata) or _metadata_indicates_whatsapp_origin(link_metadata)
+	has_old_suffix = _contains_old_whatsapp_suffix(raven_message)
+	link_direction = cstr((link or {}).get("direction") or "").strip()
+	is_backfilled = cint((link or {}).get("is_backfilled"))
+	whatsapp_type = cstr(whatsapp_message.get("type") or "").strip()
+
+	if link and _looks_like_human_reply(link, raven_message):
+		return "skipped_human_reply"
+
+	if source_kind == "legacy_link_doctype":
+		if not is_bot and _is_real_human_actor(raven_message.get("owner"), bridge_system_user):
+			return "skipped_manual_user_message"
+		if is_bot or has_whatsapp_meta or has_old_suffix:
+			return "rewrite"
+		return "skipped_unrelated"
+
+	if link_direction == "Incoming" or whatsapp_type == "Incoming":
+		if is_bot or has_whatsapp_meta or has_old_suffix:
+			return "rewrite"
+		if _is_real_human_actor(raven_message.get("owner"), bridge_system_user):
+			return "skipped_manual_user_message"
+		return "skipped_unrelated"
+
+	if link_direction == "Outgoing" or whatsapp_type == "Outgoing":
+		if is_backfilled or is_bot or has_whatsapp_meta or has_old_suffix:
+			if not is_bot and _is_real_human_actor(raven_message.get("owner"), bridge_system_user) and not (is_backfilled or has_whatsapp_meta):
+				return "skipped_human_reply"
+			return "rewrite"
+		if _is_real_human_actor(raven_message.get("owner"), bridge_system_user):
+			return "skipped_human_reply"
+		return "skipped_unrelated"
+
+	if is_bot and (has_whatsapp_meta or has_old_suffix):
+		return "rewrite"
+	if _is_real_human_actor(raven_message.get("owner"), bridge_system_user):
+		return "skipped_manual_user_message"
+	return "skipped_unrelated"
+
+
+def _detect_candidate_direction(link, whatsapp_message) -> str:
+	link_direction = cstr((link or {}).get("direction") or "").strip()
+	if link_direction:
+		return link_direction
+	whatsapp_type = cstr(whatsapp_message.get("type") or "").strip()
+	if whatsapp_type:
+		return whatsapp_type
+	return "Unknown"
 
 
 def reformat_existing_parent_thread_messages() -> frappe._dict:
