@@ -82,6 +82,24 @@ Desk-friendly setup is available from **WhatsApp Raven Bridge Settings**:
 
 `Run Bootstrap Setup` runs with no dialog and bootstraps all available WhatsApp Accounts with default route membership to Administrator.
 
+## Private Channel Escalation (MVP)
+
+Use **WhatsApp Raven Conversation** to move an individual conversation out of shared route-thread delivery:
+
+- Button: **Move to Private Channel**
+- Admin-only: Administrator/System Manager
+- Select allowed Raven users for the private channel
+- Optional display name override for the converted channel
+
+After move:
+
+- `delivery_mode` becomes `Private Channel`
+- Existing thread channel is converted to normal private channel (history is not copied)
+- Future inbound messages route to the private channel
+- Outbound WhatsApp replies require selected private members (`can_reply=1`) or admin override
+
+Move-back is intentionally not part of this MVP.
+
 ## Production Recommendation
 
 - One route per WhatsApp Account

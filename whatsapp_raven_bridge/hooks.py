@@ -45,7 +45,8 @@ required_apps = ["frappe_whatsapp", "raven"]
 # include js in doctype views
 # doctype_js = {"doctype" : "public/js/doctype.js"}
 doctype_js = {
-	"WhatsApp Raven Bridge Settings": "whatsapp_raven_bridge/doctype/whatsapp_raven_bridge_settings/whatsapp_raven_bridge_settings.js"
+	"WhatsApp Raven Bridge Settings": "whatsapp_raven_bridge/doctype/whatsapp_raven_bridge_settings/whatsapp_raven_bridge_settings.js",
+	"WhatsApp Raven Conversation": "whatsapp_raven_bridge/doctype/whatsapp_raven_conversation/whatsapp_raven_conversation.js",
 }
 # doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}

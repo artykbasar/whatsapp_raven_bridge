@@ -14,6 +14,11 @@ from whatsapp_raven_bridge.bridge.account_route import (
 	get_or_create_inbox_channel,
 	get_route_for_whatsapp_account,
 )
+from whatsapp_raven_bridge.bridge.private_channel import (
+	DELIVERY_MODE_PRIVATE_CHANNEL,
+	DELIVERY_MODE_ROUTE_THREAD,
+	ensure_private_channel_memberships,
+)
 from whatsapp_raven_bridge.bridge.whatsapp_message_rendering import build_parent_thread_starter_html
 from whatsapp_raven_bridge.utils.settings import bridge_user_context, get_settings
 
@@ -56,6 +61,12 @@ def ensure_raven_destination(conversation):
 	"""Create or reuse a Raven Channel for the given WhatsApp Raven Conversation."""
 	conversation_doc = _get_conversation_doc(conversation)
 	_clear_stale_conversation_links(conversation_doc)
+	delivery_mode = cstr(conversation_doc.get("delivery_mode") or DELIVERY_MODE_ROUTE_THREAD).strip()
+
+	if delivery_mode == DELIVERY_MODE_PRIVATE_CHANNEL:
+		private_channel = ensure_private_channel_memberships(conversation_doc)
+		if private_channel:
+			return private_channel
 
 	settings = get_settings()
 	if not settings or not cint(settings.get("enabled")):

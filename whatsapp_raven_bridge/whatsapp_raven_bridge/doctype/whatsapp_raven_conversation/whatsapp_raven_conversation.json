@@ -12,11 +12,20 @@
   "phone_number",
   "display_name",
   "profile_name",
+  "delivery_mode",
   "whatsapp_profile",
   "contact",
   "raven_workspace",
   "raven_channel",
   "parent_raven_message",
+  "private_channel_name",
+  "private_members",
+  "private_channel_members_summary",
+  "private_channel_moved_at",
+  "private_channel_moved_by",
+  "previous_parent_raven_message",
+  "previous_route_inbox_channel",
+  "previous_route_thread_channel",
   "conversation_strategy",
   "status",
   "assigned_to",
@@ -65,6 +74,14 @@
    "label": "WhatsApp Profile Name"
   },
   {
+   "default": "Route Thread",
+   "description": "Controls where future WhatsApp/Raven messages are routed.",
+   "fieldname": "delivery_mode",
+   "fieldtype": "Select",
+   "label": "Delivery Mode",
+   "options": "Route Thread\nPrivate Channel"
+  },
+  {
    "fieldname": "whatsapp_profile",
    "fieldtype": "Link",
    "label": "WhatsApp Profile",
@@ -94,6 +111,58 @@
    "fieldtype": "Link",
    "label": "Parent Raven Message",
    "options": "Raven Message"
+  },
+  {
+   "fieldname": "private_channel_name",
+   "fieldtype": "Data",
+   "label": "Private Channel Name",
+   "read_only": 1
+  },
+  {
+   "fieldname": "private_members",
+   "fieldtype": "Table",
+   "label": "Private Channel Members",
+   "options": "WhatsApp Raven Conversation Private Member"
+  },
+  {
+   "fieldname": "private_channel_members_summary",
+   "fieldtype": "Long Text",
+   "label": "Private Channel Members Summary",
+   "read_only": 1
+  },
+  {
+   "fieldname": "private_channel_moved_at",
+   "fieldtype": "Datetime",
+   "label": "Private Channel Moved At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "private_channel_moved_by",
+   "fieldtype": "Link",
+   "label": "Private Channel Moved By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "previous_parent_raven_message",
+   "fieldtype": "Link",
+   "label": "Previous Parent Raven Message",
+   "options": "Raven Message",
+   "read_only": 1
+  },
+  {
+   "fieldname": "previous_route_inbox_channel",
+   "fieldtype": "Link",
+   "label": "Previous Route Inbox Channel",
+   "options": "Raven Channel",
+   "read_only": 1
+  },
+  {
+   "fieldname": "previous_route_thread_channel",
+   "fieldtype": "Link",
+   "label": "Previous Route Thread Channel",
+   "options": "Raven Channel",
+   "read_only": 1
   },
   {
    "default": "Channel Per Contact",

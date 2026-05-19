@@ -101,6 +101,22 @@ def find_conversation_by_raven_channel(channel_id):
 	return frappe.get_doc(CONVERSATION_DOCTYPE, name) if name else None
 
 
+def find_private_conversation_by_previous_thread_channel(channel_id):
+	"""Return private-channel conversation that previously used a route thread channel id."""
+	if not channel_id:
+		return None
+
+	name = frappe.db.exists(
+		CONVERSATION_DOCTYPE,
+		{
+			"enabled": 1,
+			"delivery_mode": "Private Channel",
+			"previous_route_thread_channel": channel_id,
+		},
+	)
+	return frappe.get_doc(CONVERSATION_DOCTYPE, name) if name else None
+
+
 def get_existing_message_link_by_whatsapp_message(whatsapp_message_name):
 	return _get_existing_message_link("whatsapp_message", whatsapp_message_name)
 

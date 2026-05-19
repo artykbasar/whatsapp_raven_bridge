@@ -13,6 +13,7 @@ class WhatsAppRavenConversation(Document):
 		self._normalize_fields()
 		self._validate_account_route_mapping()
 		self._validate_unique_active_conversation()
+		self._normalize_delivery_mode()
 
 	def _normalize_fields(self):
 		self.phone_number = normalize_phone_number(self.phone_number)
@@ -71,6 +72,14 @@ class WhatsAppRavenConversation(Document):
 					"Account Route {0} is mapped to WhatsApp Account {1}, not {2}."
 				).format(self.account_route, route_account, self.whatsapp_account)
 			)
+
+	def _normalize_delivery_mode(self):
+		mode = (self.get("delivery_mode") or "").strip()
+		if not mode:
+			mode = "Route Thread"
+		if mode not in ("Route Thread", "Private Channel"):
+			frappe.throw(_("Unsupported delivery mode: {0}").format(mode))
+		self.set("delivery_mode", mode)
 
 
 def _doctype_ready(doctype):

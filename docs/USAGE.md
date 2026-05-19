@@ -79,3 +79,26 @@ Scheduled reconciliation:
 - Routed inbox/thread visibility depends on route memberships.
 - Outbound replies are allowed only for route members with `can_reply=1` (unless route explicitly allows unassigned reply).
 - Bridge infrastructure audit ownership can be shifted to `bridge_system_user`; outbound reply authorization still uses the actual Raven message owner.
+
+## Private Channel Escalation (MVP)
+
+Administrators and System Managers can move one `WhatsApp Raven Conversation` from shared route-thread delivery to a dedicated private Raven channel.
+
+How it works:
+
+1. Open **WhatsApp Raven Conversation** in Desk.
+2. Use **Move to Private Channel**.
+3. Provide selected Raven users (optional custom channel display name).
+
+Result:
+
+- Existing thread channel is converted in place to a normal private channel (`is_thread=0`), so chat history stays in place.
+- Future inbound WhatsApp messages route to that private channel.
+- Outbound replies are allowed only for selected private members (plus Administrator/System Manager override).
+- Shared inbox route thread stops receiving future messages for that conversation.
+
+Notes:
+
+- `Raven Channel.name` remains unchanged.
+- Parent starter message is demoted safely; it is not deleted during move.
+- Move-back to shared inbox is planned, not included in this MVP.

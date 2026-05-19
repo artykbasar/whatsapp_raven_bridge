@@ -1,0 +1,47 @@
+{
+ "actions": [],
+ "creation": "2026-05-19 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "raven_user",
+  "can_reply",
+  "is_admin"
+ ],
+ "fields": [
+  {
+   "fieldname": "raven_user",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Raven User",
+   "options": "Raven User",
+   "reqd": 1
+  },
+  {
+   "default": "1",
+   "fieldname": "can_reply",
+   "fieldtype": "Check",
+   "label": "Can Reply"
+  },
+  {
+   "default": "0",
+   "fieldname": "is_admin",
+   "fieldtype": "Check",
+   "label": "Is Admin"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-05-19 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "WhatsApp Raven Bridge",
+ "name": "WhatsApp Raven Conversation Private Member",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
+

@@ -108,6 +108,7 @@ Bootstrap does not configure Meta webhook URLs, WhatsApp tokens, or template app
 - Channel-per-contact fallback
 - Route-based outbound permission checks (`can_reply`)
 - Bridge System User audit context for bridge-created infrastructure
+- Admin-only private channel escalation per conversation (shared thread -> dedicated private channel)
 
 ## Current Limitations
 

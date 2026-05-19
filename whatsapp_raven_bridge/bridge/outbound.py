@@ -13,9 +13,14 @@ from frappe.utils import cint, cstr, now, strip_html_tags
 from whatsapp_raven_bridge.bridge.conversation import (
 	create_message_link,
 	find_conversation_by_raven_channel,
+	find_private_conversation_by_previous_thread_channel,
 	get_existing_message_link_by_raven_message,
 )
 from whatsapp_raven_bridge.bridge.account_route import is_raven_user_allowed_to_reply
+from whatsapp_raven_bridge.bridge.private_channel import (
+	DELIVERY_MODE_PRIVATE_CHANNEL,
+	is_private_channel_user_allowed_to_reply,
+)
 from whatsapp_raven_bridge.utils.settings import get_settings
 
 
@@ -70,6 +75,9 @@ def process_outgoing_raven_message(doc):
 
 	conversation = find_conversation_by_raven_channel(doc.get("channel_id"))
 	if not conversation:
+		moved_private = find_private_conversation_by_previous_thread_channel(doc.get("channel_id"))
+		if moved_private:
+			return "conversation_moved_to_private_channel"
 		return "skipped_no_conversation"
 
 	if not cint(conversation.get("enabled")) or cstr(conversation.get("status")) == "Disabled":
@@ -78,8 +86,16 @@ def process_outgoing_raven_message(doc):
 	if not cstr(conversation.get("phone_number")).strip():
 		return "skipped_missing_phone"
 
-	if conversation.get("account_route"):
-		sender_raven_user = _resolve_sender_raven_user(doc)
+	sender_raven_user = _resolve_sender_raven_user(doc)
+	delivery_mode = cstr(conversation.get("delivery_mode") or "").strip()
+	if delivery_mode == DELIVERY_MODE_PRIVATE_CHANNEL:
+		if not is_private_channel_user_allowed_to_reply(
+			conversation=conversation,
+			raven_user=sender_raven_user,
+			sender_user=cstr(doc.get("owner") or "").strip(),
+		):
+			return "skipped_user_not_allowed"
+	elif conversation.get("account_route"):
 		if not sender_raven_user:
 			return "skipped_user_not_allowed"
 		if not is_raven_user_allowed_to_reply(conversation.get("account_route"), sender_raven_user):

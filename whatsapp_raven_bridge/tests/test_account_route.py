@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import frappe
 from frappe.tests import IntegrationTestCase
+from frappe.utils import cint, cstr
 from frappe.utils.password import set_encrypted_password
 
+from whatsapp_raven_bridge.api.conversation import move_to_private_channel
 from whatsapp_raven_bridge.bridge.account_route import (
 	ensure_route_memberships,
 	get_or_create_inbox_channel,
@@ -20,6 +22,9 @@ class TestAccountRouteDesign(IntegrationTestCase):
 	WORKSPACE = "WARC4C Workspace"
 	BOT_NAME = "WARC4C Bot"
 	ACCOUNT_NAME = "WARC4C WhatsApp Account"
+	PRIVATE_ALLOWED_USER = "warc4c_private_allowed@example.com"
+	PRIVATE_DENIED_USER = "warc4c_private_denied@example.com"
+	NON_MANAGER_USER = "warc4c_non_manager@example.com"
 
 	@classmethod
 	def setUpClass(cls):
@@ -29,6 +34,13 @@ class TestAccountRouteDesign(IntegrationTestCase):
 		cls._ensure_workspace()
 		cls._ensure_bot()
 		cls._ensure_whatsapp_account()
+		cls._ensure_named_user(cls.PRIVATE_ALLOWED_USER, "WARC4C Allowed Agent")
+		cls._ensure_named_user(cls.PRIVATE_DENIED_USER, "WARC4C Denied Agent")
+		cls._ensure_named_user(cls.NON_MANAGER_USER, "WARC4C Non Manager")
+		cls._ensure_raven_user(cls.PRIVATE_ALLOWED_USER)
+		cls._ensure_raven_user(cls.PRIVATE_DENIED_USER)
+		cls._ensure_raven_user(cls.NON_MANAGER_USER)
+		cls._remove_system_manager_role(cls.NON_MANAGER_USER)
 		cls._configure_base_settings()
 		frappe.db.commit()
 
@@ -426,6 +438,231 @@ class TestAccountRouteDesign(IntegrationTestCase):
 			frappe.db.exists("WhatsApp Raven Message Link", {"raven_message": raven_message.name})
 		)
 
+	def test_private_channel_move_basic_conversion(self):
+		allowed_raven = self._raven_user_for(self.PRIVATE_ALLOWED_USER)
+		denied_raven = self._raven_user_for(self.PRIVATE_DENIED_USER)
+		route = self._create_route(
+			"private-basic",
+			conversation_strategy="Thread Per Contact",
+			route_members=[
+				{"raven_user": "Administrator", "is_admin": 1, "can_reply": 1},
+				{"raven_user": allowed_raven, "is_admin": 0, "can_reply": 1},
+				{"raven_user": denied_raven, "is_admin": 0, "can_reply": 1},
+			],
+		)
+		conversation = self._make_conversation(route, "+447733119901")
+		parent_before = cstr(conversation.parent_raven_message or "").strip()
+		channel_before = cstr(conversation.raven_channel or "").strip()
+		parent_doc_before = frappe.get_doc("Raven Message", parent_before)
+		inbox_before = cstr(parent_doc_before.channel_id or "").strip()
+		self.assertTrue(parent_before)
+		self.assertEqual(parent_before, channel_before)
+		self.assertEqual(int(parent_doc_before.is_thread or 0), 1)
+
+		result = move_to_private_channel(
+			conversation=conversation.name,
+			raven_users=[allowed_raven],
+			channel_name="warc4c-private-escalation",
+		)
+		conversation.reload()
+		channel_doc = frappe.get_doc("Raven Channel", conversation.raven_channel)
+		parent_doc = frappe.get_doc("Raven Message", conversation.parent_raven_message)
+
+		self.assertEqual(result.get("conversation"), conversation.name)
+		self.assertEqual(cstr(conversation.delivery_mode), "Private Channel")
+		self.assertEqual(cstr(conversation.raven_channel), channel_before)
+		self.assertEqual(int(channel_doc.is_thread or 0), 0)
+		self.assertEqual(cstr(channel_doc.type), "Private")
+		self.assertEqual(cstr(channel_doc.channel_name), "warc4c-private-escalation")
+		self.assertEqual(cstr(conversation.private_channel_name), "warc4c-private-escalation")
+		self.assertEqual(cstr(conversation.previous_parent_raven_message), parent_before)
+		self.assertEqual(cstr(conversation.previous_route_thread_channel), channel_before)
+		self.assertEqual(cstr(conversation.previous_route_inbox_channel), inbox_before)
+		self.assertEqual(int(parent_doc.is_thread or 0), 0)
+		self.assertEqual(cstr(parent_doc.channel_id), inbox_before)
+		self.assertTrue(frappe.db.exists("Raven Message", parent_before))
+		self.assertNotEqual(cstr(parent_doc.text or ""), "")
+		self.assertGreaterEqual(
+			frappe.db.count("Raven Message", {"channel_id": conversation.raven_channel}),
+			0,
+		)
+
+	def test_private_channel_move_membership_and_outbound_permissions(self):
+		allowed_raven = self._raven_user_for(self.PRIVATE_ALLOWED_USER)
+		denied_raven = self._raven_user_for(self.PRIVATE_DENIED_USER)
+		route = self._create_route(
+			"private-members",
+			conversation_strategy="Thread Per Contact",
+			route_members=[
+				{"raven_user": "Administrator", "is_admin": 1, "can_reply": 1},
+				{"raven_user": allowed_raven, "is_admin": 0, "can_reply": 1},
+				{"raven_user": denied_raven, "is_admin": 0, "can_reply": 1},
+			],
+		)
+		conversation = self._make_conversation(route, "+447733119902")
+		move_to_private_channel(conversation=conversation.name, raven_users=[allowed_raven], channel_name="warc4c-private-members")
+		conversation.reload()
+
+		self.assertTrue(
+			frappe.db.exists(
+				"Raven Channel Member",
+				{"channel_id": conversation.raven_channel, "user_id": allowed_raven},
+			)
+		)
+		self.assertFalse(
+			frappe.db.exists(
+				"Raven Channel Member",
+				{"channel_id": conversation.raven_channel, "user_id": denied_raven},
+			)
+		)
+
+		allowed_message = self._insert_human_raven_message(
+			channel_id=conversation.raven_channel,
+			text="<p>warc4c private allowed outbound</p>",
+			user_id=self.PRIVATE_ALLOWED_USER,
+		)
+		self.assertTrue(
+			frappe.db.exists("WhatsApp Raven Message Link", {"raven_message": allowed_message.name})
+		)
+
+		denied_message = self._insert_human_raven_message(
+			channel_id=conversation.raven_channel,
+			text="<p>warc4c private denied outbound</p>",
+			user_id=self.PRIVATE_DENIED_USER,
+		)
+		result = process_outgoing_raven_message(denied_message)
+		self.assertEqual(result, "skipped_user_not_allowed")
+		self.assertFalse(
+			frappe.db.exists("WhatsApp Raven Message Link", {"raven_message": denied_message.name})
+		)
+
+	def test_private_channel_inbound_routes_to_private_channel_without_new_parent(self):
+		allowed_raven = self._raven_user_for(self.PRIVATE_ALLOWED_USER)
+		route = self._create_route(
+			"private-inbound",
+			conversation_strategy="Thread Per Contact",
+			route_members=[
+				{"raven_user": "Administrator", "is_admin": 1, "can_reply": 1},
+				{"raven_user": allowed_raven, "is_admin": 0, "can_reply": 1},
+			],
+		)
+		phone = "+447733119903"
+		first = self._insert_incoming_thread_message(
+			phone=phone,
+			message_id="wamid.warc4c.private.inbound.001",
+			body="before private move",
+		)
+		conversation = frappe.get_doc(
+			"WhatsApp Raven Conversation",
+			frappe.db.get_value(
+				"WhatsApp Raven Conversation",
+				{"phone_number": normalize_phone_number(phone), "whatsapp_account": self.ACCOUNT_NAME},
+				"name",
+			),
+		)
+		parent_before = cstr(conversation.parent_raven_message or "").strip()
+		inbox_before = cstr(frappe.db.get_value("Raven Message", parent_before, "channel_id") or "").strip()
+		inbox_message_count_before = frappe.db.count("Raven Message", {"channel_id": inbox_before})
+		move_to_private_channel(conversation=conversation.name, raven_users=[allowed_raven], channel_name="warc4c-private-inbound")
+		conversation.reload()
+
+		second = self._insert_incoming_thread_message(
+			phone=phone,
+			message_id="wamid.warc4c.private.inbound.002",
+			body="after private move",
+		)
+		link_name = frappe.db.get_value("WhatsApp Raven Message Link", {"whatsapp_message": second.name}, "name")
+		self.assertTrue(link_name)
+		link = frappe.get_doc("WhatsApp Raven Message Link", link_name)
+		self.assertEqual(cstr(link.raven_channel), cstr(conversation.raven_channel))
+		self.assertTrue(frappe.db.exists("Raven Message", parent_before))
+		self.assertEqual(cint(frappe.db.get_value("Raven Message", parent_before, "is_thread") or 0), 0)
+		inbox_message_count_after = frappe.db.count("Raven Message", {"channel_id": inbox_before})
+		self.assertEqual(inbox_message_count_after, inbox_message_count_before)
+		self.assertTrue(frappe.db.exists("WhatsApp Message", first.name))
+
+	def test_private_channel_move_is_idempotent_and_updates_members(self):
+		allowed_raven = self._raven_user_for(self.PRIVATE_ALLOWED_USER)
+		denied_raven = self._raven_user_for(self.PRIVATE_DENIED_USER)
+		route = self._create_route(
+			"private-idempotent",
+			conversation_strategy="Thread Per Contact",
+			route_members=[
+				{"raven_user": "Administrator", "is_admin": 1, "can_reply": 1},
+				{"raven_user": allowed_raven, "is_admin": 0, "can_reply": 1},
+				{"raven_user": denied_raven, "is_admin": 0, "can_reply": 1},
+			],
+		)
+		conversation = self._make_conversation(route, "+447733119904")
+		first = move_to_private_channel(conversation=conversation.name, raven_users=[allowed_raven], channel_name="warc4c-private-1")
+		second = move_to_private_channel(
+			conversation=conversation.name,
+			raven_users=[allowed_raven, denied_raven],
+			channel_name="warc4c-private-2",
+		)
+		conversation.reload()
+
+		self.assertEqual(cstr(first.get("private_channel")), cstr(second.get("private_channel")))
+		self.assertEqual(cstr(conversation.private_channel_name), "warc4c-private-2")
+		self.assertTrue(
+			frappe.db.exists(
+				"Raven Channel Member",
+				{"channel_id": conversation.raven_channel, "user_id": denied_raven},
+			)
+		)
+
+	def test_private_channel_move_permission_denied_for_non_system_manager(self):
+		route = self._create_route("private-perm", conversation_strategy="Thread Per Contact")
+		conversation = self._make_conversation(route, "+447733119905")
+		current_user = frappe.session.user
+		try:
+			frappe.set_user(self.NON_MANAGER_USER)
+			with self.assertRaises(frappe.PermissionError):
+				move_to_private_channel(conversation=conversation.name, raven_users=["Administrator"])
+		finally:
+			frappe.set_user(current_user)
+
+	def test_private_channel_move_permission_denied_for_guest(self):
+		route = self._create_route("private-guest", conversation_strategy="Thread Per Contact")
+		conversation = self._make_conversation(route, "+447733119907")
+		current_user = frappe.session.user
+		try:
+			frappe.set_user("Guest")
+			with self.assertRaises(frappe.PermissionError):
+				move_to_private_channel(conversation=conversation.name, raven_users=["Administrator"])
+		finally:
+			frappe.set_user(current_user)
+
+	def test_private_channel_old_route_thread_reply_is_blocked(self):
+		allowed_raven = self._raven_user_for(self.PRIVATE_ALLOWED_USER)
+		route = self._create_route(
+			"private-old-thread",
+			conversation_strategy="Thread Per Contact",
+			route_members=[
+				{"raven_user": "Administrator", "is_admin": 1, "can_reply": 1},
+				{"raven_user": allowed_raven, "is_admin": 0, "can_reply": 1},
+			],
+		)
+		conversation = self._make_conversation(route, "+447733119906")
+		move_to_private_channel(conversation=conversation.name, raven_users=[allowed_raven], channel_name="warc4c-private-old")
+		conversation.reload()
+
+		if conversation.previous_route_inbox_channel:
+			raven_message = frappe.get_doc(
+				{
+					"doctype": "Raven Message",
+					"channel_id": conversation.previous_route_inbox_channel,
+					"message_type": "Text",
+					"text": "<p>warc4c reply on old inbox should not sync</p>",
+					"is_bot_message": 0,
+				}
+			).insert(ignore_permissions=True)
+			result = process_outgoing_raven_message(raven_message)
+			self.assertIn(result, ("conversation_moved_to_private_channel", "skipped_no_conversation"))
+			self.assertFalse(
+				frappe.db.exists("WhatsApp Raven Message Link", {"raven_message": raven_message.name})
+			)
+
 	@classmethod
 	def _snapshot_settings(cls):
 		settings = frappe.get_single("WhatsApp Raven Bridge Settings")
@@ -557,7 +794,14 @@ class TestAccountRouteDesign(IntegrationTestCase):
 		conversation_strategy,
 		include_admin_member=True,
 		allow_unassigned_reply=0,
+		route_members=None,
 	):
+		if route_members is None:
+			route_members = (
+				[{"raven_user": "Administrator", "is_admin": 1, "can_reply": 1}]
+				if include_admin_member
+				else []
+			)
 		route = frappe.get_doc(
 			{
 				"doctype": "WhatsApp Raven Account Route",
@@ -568,11 +812,7 @@ class TestAccountRouteDesign(IntegrationTestCase):
 				"channel_type": "Private",
 				"conversation_strategy": conversation_strategy,
 				"allow_unassigned_reply": allow_unassigned_reply,
-				"members": (
-					[{"raven_user": "Administrator", "is_admin": 1, "can_reply": 1}]
-					if include_admin_member
-					else []
-				),
+				"members": route_members,
 			}
 		).insert(ignore_permissions=True)
 		return route
@@ -604,6 +844,59 @@ class TestAccountRouteDesign(IntegrationTestCase):
 				"whatsapp_account": self.ACCOUNT_NAME,
 			}
 		).insert(ignore_permissions=True)
+
+	def _insert_human_raven_message(self, *, channel_id, text, user_id):
+		current_user = frappe.session.user
+		try:
+			frappe.set_user(user_id)
+			return frappe.get_doc(
+				{
+					"doctype": "Raven Message",
+					"channel_id": channel_id,
+					"message_type": "Text",
+					"text": text,
+					"is_bot_message": 0,
+				}
+			).insert(ignore_permissions=True)
+		finally:
+			frappe.set_user(current_user)
+
+	@classmethod
+	def _raven_user_for(cls, user_id):
+		return cstr(frappe.db.get_value("Raven User", {"user": user_id, "enabled": 1}, "name") or "").strip()
+
+	@classmethod
+	def _ensure_named_user(cls, user_id, full_name):
+		if frappe.db.exists("User", user_id):
+			user_doc = frappe.get_doc("User", user_id)
+			user_doc.enabled = 1
+		else:
+			user_doc = frappe.get_doc(
+				{
+					"doctype": "User",
+					"email": user_id,
+					"first_name": full_name,
+					"send_welcome_email": 0,
+					"enabled": 1,
+					"user_type": "System User",
+				}
+			)
+		user_doc.full_name = full_name
+		user_doc.first_name = full_name
+		user_doc.save(ignore_permissions=True)
+
+	@classmethod
+	def _remove_system_manager_role(cls, user_id):
+		if not frappe.db.exists("User", user_id):
+			return
+		user_doc = frappe.get_doc("User", user_id)
+		changed = False
+		for idx in range(len(user_doc.roles or []) - 1, -1, -1):
+			if user_doc.roles[idx].role == "System Manager":
+				user_doc.roles.pop(idx)
+				changed = True
+		if changed:
+			user_doc.save(ignore_permissions=True)
 
 	def _cleanup(self):
 		conversation_rows = frappe.get_all(
