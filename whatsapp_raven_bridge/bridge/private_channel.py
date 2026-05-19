@@ -9,7 +9,7 @@ import frappe
 from frappe import _
 from frappe.utils import cint, cstr, now_datetime
 
-from whatsapp_raven_bridge.utils.settings import bridge_user_context, get_settings
+from whatsapp_raven_bridge.utils.settings import get_settings
 
 CONVERSATION_DOCTYPE = "WhatsApp Raven Conversation"
 ROUTE_DOCTYPE = "WhatsApp Raven Account Route"
@@ -80,34 +80,33 @@ def move_conversation_to_private_channel(
 		if cstr(parent_doc.name or "").strip() != cstr(channel_doc.name or "").strip():
 			frappe.throw(_("Thread invariants are broken: parent message and thread channel do not match."))
 
-	with bridge_user_context():
+	frappe.db.set_value(
+		RAVEN_CHANNEL_DOCTYPE,
+		channel_doc.name,
+		{
+			"is_thread": 0,
+			"type": "Private",
+			"channel_name": target_channel_name,
+		},
+		update_modified=False,
+	)
+	frappe.clear_document_cache(RAVEN_CHANNEL_DOCTYPE, channel_doc.name)
+
+	if parent_doc and cint(parent_doc.is_thread):
 		frappe.db.set_value(
-			RAVEN_CHANNEL_DOCTYPE,
-			channel_doc.name,
+			RAVEN_MESSAGE_DOCTYPE,
+			parent_doc.name,
 			{
 				"is_thread": 0,
-				"type": "Private",
-				"channel_name": target_channel_name,
+				"text": "<p><em>Moved to private WhatsApp channel.</em></p>",
+				"content": "Moved to private WhatsApp channel.",
+				"hide_link_preview": 1,
+				"link_doctype": None,
+				"link_document": None,
 			},
 			update_modified=False,
 		)
-		frappe.clear_document_cache(RAVEN_CHANNEL_DOCTYPE, channel_doc.name)
-
-		if parent_doc and cint(parent_doc.is_thread):
-			frappe.db.set_value(
-				RAVEN_MESSAGE_DOCTYPE,
-				parent_doc.name,
-				{
-					"is_thread": 0,
-					"text": "<p><em>Moved to private WhatsApp channel.</em></p>",
-					"content": "Moved to private WhatsApp channel.",
-					"hide_link_preview": 1,
-					"link_doctype": None,
-					"link_document": None,
-				},
-				update_modified=False,
-			)
-			frappe.clear_document_cache(RAVEN_MESSAGE_DOCTYPE, parent_doc.name)
+		frappe.clear_document_cache(RAVEN_MESSAGE_DOCTYPE, parent_doc.name)
 
 	private_member_rows = _build_private_member_rows(selected_members, route_doc=route_doc, admin_raven_user=admin_raven_user)
 		# Ensure bridge/system visibility while keeping route-wide membership narrow.
@@ -165,6 +164,7 @@ def move_conversation_to_private_channel(
 			"previous_route_thread_channel": conversation_doc.previous_route_thread_channel,
 			"selected_members": [row.get("raven_user") for row in private_member_rows],
 			"actor_raven_user": actor_raven_user,
+			"route_invalidated": not already_private,
 		}
 	)
 
@@ -359,12 +359,12 @@ def _ensure_private_memberships(*, channel_doc, workspace: str, private_member_r
 		if not raven_user:
 			continue
 		is_admin = cint(row.get("is_admin", 0))
-		ensure_workspace_member(workspace, raven_user, is_admin=is_admin)
-		ensure_channel_member(channel_doc.name, raven_user, is_admin=is_admin)
+		ensure_workspace_member(workspace, raven_user, is_admin=is_admin, use_bridge_context=False)
+		ensure_channel_member(channel_doc.name, raven_user, is_admin=is_admin, use_bridge_context=False)
 
 	if bridge_raven_user:
-		ensure_workspace_member(workspace, bridge_raven_user, is_admin=1)
-		ensure_channel_member(channel_doc.name, bridge_raven_user, is_admin=1)
+		ensure_workspace_member(workspace, bridge_raven_user, is_admin=1, use_bridge_context=False)
+		ensure_channel_member(channel_doc.name, bridge_raven_user, is_admin=1, use_bridge_context=False)
 
 
 def _remove_unselected_route_members_from_channel(*, channel_id: str, route_doc, keep_users: set[str]):

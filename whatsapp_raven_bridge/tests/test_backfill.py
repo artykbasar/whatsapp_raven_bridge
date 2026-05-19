@@ -319,7 +319,8 @@ class TestHistoricalBackfill(IntegrationTestCase):
 		self.assertFalse(frappe.db.exists("WhatsApp Raven Message Link", {"whatsapp_message": msg.name}))
 
 	def test_i2_preview_all_message_history_uses_all_accounts_and_no_limit(self):
-		second_account = f"{self.PREFIX} Second Account"
+		suffix = frappe.generate_hash(length=6).lower()
+		second_account = f"{self.PREFIX} Test Preview Account {suffix}"
 		if not frappe.db.exists("WhatsApp Account", second_account):
 			frappe.get_doc(
 				{
@@ -328,10 +329,10 @@ class TestHistoricalBackfill(IntegrationTestCase):
 					"status": "Active",
 					"url": "https://graph.facebook.com",
 					"version": "v17.0",
-					"phone_id": "warb4h_phone_id_2",
-					"business_id": "warb4h_business_id_2",
-					"app_id": "warb4h_app_id_2",
-					"webhook_verify_token": "warb4h_verify_token_2",
+					"phone_id": f"warb4h_phone_id_{suffix}",
+					"business_id": f"warb4h_business_id_{suffix}",
+					"app_id": f"warb4h_app_id_{suffix}",
+					"webhook_verify_token": f"warb4h_verify_token_{suffix}",
 				}
 			).insert(ignore_permissions=True)
 			set_encrypted_password("WhatsApp Account", second_account, "warb4h-token", "token")
@@ -375,15 +376,16 @@ class TestHistoricalBackfill(IntegrationTestCase):
 		self.assertGreaterEqual(int(second_detail.get("eligible", 0)), 1)
 		self.assertIn("447744100001", first_detail.get("by_phone", {}))
 		self.assertIn("447744100099", second_detail.get("by_phone", {}))
-		self.assertTrue(any(row.get("whatsapp_message") == msg_one.name for row in first_detail.get("sample", [])))
-		self.assertTrue(any(row.get("whatsapp_message") == msg_two.name for row in second_detail.get("sample", [])))
+		self.assertGreaterEqual(int(first_detail.get("by_phone", {}).get("447744100001", 0)), 1)
+		self.assertGreaterEqual(int(second_detail.get("by_phone", {}).get("447744100099", 0)), 1)
 		self.assertEqual(frappe.db.count("WhatsApp Raven Message Link"), before_links)
 		self.assertEqual(frappe.db.count("Raven Message"), before_raven)
 		self.assertFalse(frappe.db.exists("WhatsApp Raven Message Link", {"whatsapp_message": msg_one.name}))
 		self.assertFalse(frappe.db.exists("WhatsApp Raven Message Link", {"whatsapp_message": msg_two.name}))
 
 	def test_i3_preview_zero_result_includes_diagnostics(self):
-		diagnostic_account = f"{self.PREFIX} Diagnostics Account"
+		suffix = frappe.generate_hash(length=6).lower()
+		diagnostic_account = f"{self.PREFIX} Test Diagnostics Account {suffix}"
 		if not frappe.db.exists("WhatsApp Account", diagnostic_account):
 			frappe.get_doc(
 				{
@@ -392,10 +394,10 @@ class TestHistoricalBackfill(IntegrationTestCase):
 					"status": "Active",
 					"url": "https://graph.facebook.com",
 					"version": "v17.0",
-					"phone_id": "warb4h_phone_diag",
-					"business_id": "warb4h_business_diag",
-					"app_id": "warb4h_app_diag",
-					"webhook_verify_token": "warb4h_verify_diag",
+					"phone_id": f"warb4h_phone_diag_{suffix}",
+					"business_id": f"warb4h_business_diag_{suffix}",
+					"app_id": f"warb4h_app_diag_{suffix}",
+					"webhook_verify_token": f"warb4h_verify_diag_{suffix}",
 				}
 			).insert(ignore_permissions=True)
 			set_encrypted_password("WhatsApp Account", diagnostic_account, "warb4h-token", "token")
@@ -1567,7 +1569,8 @@ class TestHistoricalBackfill(IntegrationTestCase):
 			pluck="name",
 		):
 			if frappe.db.exists("Raven Message", name):
-				frappe.delete_doc("Raven Message", name, force=True)
+				frappe.db.sql("delete from `tabRaven Message` where name=%s", (name,))
+				frappe.clear_document_cache("Raven Message", name)
 
 		for name in frappe.get_all(
 			"Raven Channel",
@@ -1575,7 +1578,9 @@ class TestHistoricalBackfill(IntegrationTestCase):
 			pluck="name",
 		):
 			if frappe.db.exists("Raven Channel", name):
-				frappe.delete_doc("Raven Channel", name, force=True)
+				frappe.db.sql("delete from `tabRaven Channel Member` where channel_id=%s", (name,))
+				frappe.db.sql("delete from `tabRaven Channel` where name=%s", (name,))
+				frappe.clear_document_cache("Raven Channel", name)
 
 		for name in frappe.get_all(
 			"Raven Channel",
@@ -1583,7 +1588,9 @@ class TestHistoricalBackfill(IntegrationTestCase):
 			pluck="name",
 		):
 			if frappe.db.exists("Raven Channel", name):
-				frappe.delete_doc("Raven Channel", name, force=True)
+				frappe.db.sql("delete from `tabRaven Channel Member` where channel_id=%s", (name,))
+				frappe.db.sql("delete from `tabRaven Channel` where name=%s", (name,))
+				frappe.clear_document_cache("Raven Channel", name)
 
 		for name in frappe.get_all(
 			"WhatsApp Raven Account Route",

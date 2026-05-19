@@ -931,6 +931,20 @@ class TestAccountRouteDesign(IntegrationTestCase):
 				{"channel_id": conversation.raven_channel, "user_id": actor_raven},
 			)
 		)
+		self.assertTrue(cstr(result.get("private_channel_url")).startswith("/raven/"))
+		self.assertTrue(bool(result.get("route_invalidated")))
+
+	def test_raven_message_action_preserves_session_user(self):
+		route = self._create_route("action-session-user", conversation_strategy="Thread Per Contact")
+		conversation = self._make_conversation(route, "+447733119915")
+		current_user = frappe.session.user
+		result = move_message_conversation_to_private_channel(
+			raven_message=conversation.parent_raven_message,
+			raven_users="",
+			channel_name="warc4c-action-session-user",
+		)
+		self.assertTrue(result.get("ok"))
+		self.assertEqual(cstr(frappe.session.user), cstr(current_user))
 
 	def test_explain_private_channel_action_target(self):
 		route = self._create_route("action-explain", conversation_strategy="Thread Per Contact")
@@ -942,6 +956,10 @@ class TestAccountRouteDesign(IntegrationTestCase):
 		self.assertTrue(resolved.get("can_move"))
 		self.assertEqual(cstr(resolved.get("conversation")), conversation.name)
 		self.assertIn("matched_", cstr(resolved.get("reason")))
+		self.assertEqual(cstr(resolved.get("current_user")), cstr(frappe.session.user))
+		self.assertEqual(cstr(resolved.get("actor_raven_user")), self._raven_user_for("Administrator"))
+		self.assertEqual(cstr(resolved.get("target_channel")), cstr(conversation.raven_channel))
+		self.assertTrue(bool(resolved.get("route_will_be_invalidated")))
 
 	def test_raven_message_action_permission_denied(self):
 		route = self._create_route("action-perm", conversation_strategy="Thread Per Contact")

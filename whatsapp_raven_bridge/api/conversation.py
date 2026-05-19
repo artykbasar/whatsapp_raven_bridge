@@ -149,7 +149,18 @@ def explain_private_channel_action_target(
 		)
 	)
 	conversation_name = cstr(resolved.get("conversation") or "").strip()
+	current_user = cstr(frappe.session.user or "").strip()
+	actor_raven_user = cstr(frappe.db.get_value("Raven User", {"user": current_user, "enabled": 1}, "name") or "").strip()
+	resolved.update(
+		{
+			"current_user": current_user,
+			"actor_raven_user": actor_raven_user,
+		}
+	)
 	resolved["can_move"] = bool(conversation_name)
+	resolved["route_will_be_invalidated"] = False
+	resolved["target_channel"] = None
+	resolved["target_workspace"] = None
 	resolved["suggested_action"] = (
 		"Use this message action now."
 		if conversation_name
@@ -158,7 +169,36 @@ def explain_private_channel_action_target(
 			"or a message inside the WhatsApp thread."
 		)
 	)
+	if conversation_name and frappe.db.exists("WhatsApp Raven Conversation", conversation_name):
+		conversation_doc = frappe.get_doc("WhatsApp Raven Conversation", conversation_name)
+		resolved["target_channel"] = cstr(conversation_doc.raven_channel or "").strip()
+		if conversation_doc.account_route:
+			resolved["target_workspace"] = cstr(
+				frappe.db.get_value("WhatsApp Raven Account Route", conversation_doc.account_route, "raven_workspace") or ""
+			).strip()
+		delivery_mode = cstr(conversation_doc.delivery_mode or "Route Thread").strip()
+		channel_is_thread = cint(
+			frappe.db.get_value("Raven Channel", conversation_doc.raven_channel, "is_thread")
+			if conversation_doc.raven_channel and frappe.db.exists("Raven Channel", conversation_doc.raven_channel)
+			else 0
+		)
+		resolved["route_will_be_invalidated"] = bool(
+			delivery_mode != "Private Channel" and channel_is_thread
+		)
+		if resolved["route_will_be_invalidated"]:
+			resolved["warning"] = _(
+				"The current thread route will be invalid after move. Open the private channel from Raven sidebar."
+			)
 	return resolved
+
+
+@frappe.whitelist()
+def preview_move_to_private_channel(
+	raven_message: str | None = None,
+	channel_id: str | None = None,
+) -> dict[str, Any]:
+	"""Preflight helper for private-channel move diagnostics."""
+	return explain_private_channel_action_target(raven_message=raven_message, channel_id=channel_id)
 
 
 def resolve_conversation_from_raven_message(
