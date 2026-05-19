@@ -84,11 +84,16 @@ Scheduled reconciliation:
 
 Administrators and System Managers can move one `WhatsApp Raven Conversation` from shared route-thread delivery to a dedicated private Raven channel.
 
-How it works:
+Entry points:
 
-1. Open **WhatsApp Raven Conversation** in Desk.
-2. Use **Move to Private Channel**.
-3. Provide selected Raven users (optional custom channel display name).
+1. Raven message action:
+   - Open message actions on a WhatsApp parent starter or any message in that conversation.
+   - Choose **Move WhatsApp Conversation to Private Channel**.
+2. Desk action:
+   - Open **WhatsApp Raven Conversation**.
+   - Click **Move to Private Channel**.
+
+Both paths prompt for selected Raven users and optional private channel display name.
 
 Result:
 

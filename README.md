@@ -109,6 +109,8 @@ Bootstrap does not configure Meta webhook URLs, WhatsApp tokens, or template app
 - Route-based outbound permission checks (`can_reply`)
 - Bridge System User audit context for bridge-created infrastructure
 - Admin-only private channel escalation per conversation (shared thread -> dedicated private channel)
+  - Raven Action: `Move WhatsApp Conversation to Private Channel`
+  - Desk action on `WhatsApp Raven Conversation`: `Move to Private Channel`
 
 ## Current Limitations
 
@@ -118,6 +120,7 @@ Bootstrap does not configure Meta webhook URLs, WhatsApp tokens, or template app
 - No Raven frontend action button yet
 - Meta webhook/token/template setup is still manual
 - Bridge does not expose a Raven UI button for template-start yet
+- Move-back from private channel to shared route thread is not implemented yet
 
 ## WhatsApp Message UI
 

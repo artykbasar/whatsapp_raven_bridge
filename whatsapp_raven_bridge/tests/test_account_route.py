@@ -5,7 +5,10 @@ from frappe.tests import IntegrationTestCase
 from frappe.utils import cint, cstr
 from frappe.utils.password import set_encrypted_password
 
-from whatsapp_raven_bridge.api.conversation import move_to_private_channel
+from whatsapp_raven_bridge.api.conversation import (
+	move_message_conversation_to_private_channel,
+	move_to_private_channel,
+)
 from whatsapp_raven_bridge.bridge.account_route import (
 	ensure_route_memberships,
 	get_or_create_inbox_channel,
@@ -13,6 +16,11 @@ from whatsapp_raven_bridge.bridge.account_route import (
 )
 from whatsapp_raven_bridge.bridge.conversation import get_or_create_conversation, normalize_phone_number
 from whatsapp_raven_bridge.bridge.outbound import process_outgoing_raven_message
+from whatsapp_raven_bridge.bridge.raven_actions import (
+	ACTION_FUNCTION_PATH,
+	ACTION_NAME,
+	ensure_raven_message_actions,
+)
 from whatsapp_raven_bridge.bridge.raven_destination import ensure_raven_destination
 from whatsapp_raven_bridge.bridge.whatsapp_message_rendering import format_phone_for_display
 
@@ -663,6 +671,149 @@ class TestAccountRouteDesign(IntegrationTestCase):
 				frappe.db.exists("WhatsApp Raven Message Link", {"raven_message": raven_message.name})
 			)
 
+	def test_raven_message_action_created_idempotently(self):
+		result_1 = ensure_raven_message_actions()
+		result_2 = ensure_raven_message_actions()
+
+		action_names = frappe.get_all(
+			"Raven Message Action",
+			filters={"custom_function_path": ACTION_FUNCTION_PATH},
+			pluck="name",
+		)
+		self.assertEqual(len(action_names), 1)
+		action = frappe.get_doc("Raven Message Action", action_names[0])
+		self.assertEqual(cstr(action.action_name), ACTION_NAME)
+		self.assertEqual(cstr(action.action), "Custom Function")
+		self.assertEqual(cstr(action.custom_function_path), ACTION_FUNCTION_PATH)
+		self.assertTrue(result_1.get("updated"))
+		self.assertTrue(result_2.get("updated"))
+
+		fields = {row.fieldname: row for row in (action.fields or [])}
+		self.assertIn("raven_message", fields)
+		self.assertIn("channel_id", fields)
+		self.assertIn("raven_users", fields)
+		self.assertIn("channel_name", fields)
+		self.assertEqual(cstr(fields["raven_message"].default_value_type), "Message Field")
+		self.assertEqual(cstr(fields["raven_message"].default_value), "name")
+		self.assertEqual(cstr(fields["channel_id"].default_value_type), "Message Field")
+		self.assertEqual(cstr(fields["channel_id"].default_value), "channel_id")
+		self.assertEqual(cint(fields["raven_users"].is_required), 1)
+
+	def test_raven_message_action_resolves_parent_starter(self):
+		allowed_raven = self._raven_user_for(self.PRIVATE_ALLOWED_USER)
+		route = self._create_route("action-parent", conversation_strategy="Thread Per Contact")
+		conversation = self._make_conversation(route, "+447733119908")
+
+		result = move_message_conversation_to_private_channel(
+			raven_message=conversation.parent_raven_message,
+			raven_users=[allowed_raven],
+			channel_name="warc4c-action-parent",
+		)
+		conversation.reload()
+		self.assertEqual(cstr(result.get("resolved_conversation")), conversation.name)
+		self.assertEqual(cstr(conversation.delivery_mode), "Private Channel")
+		self.assertEqual(cint(frappe.db.get_value("Raven Channel", conversation.raven_channel, "is_thread") or 0), 0)
+
+	def test_raven_message_action_resolves_thread_message(self):
+		allowed_raven = self._raven_user_for(self.PRIVATE_ALLOWED_USER)
+		route = self._create_route("action-thread-msg", conversation_strategy="Thread Per Contact")
+		conversation = self._make_conversation(route, "+447733119909")
+
+		thread_message = frappe.get_doc(
+			{
+				"doctype": "Raven Message",
+				"channel_id": conversation.raven_channel,
+				"message_type": "Text",
+				"text": "<p>warc4c action thread message</p>",
+				"is_bot_message": 1,
+			}
+		).insert(ignore_permissions=True)
+
+		result = move_message_conversation_to_private_channel(
+			raven_message=thread_message.name,
+			raven_users=[allowed_raven],
+			channel_name="warc4c-action-thread-msg",
+		)
+		conversation.reload()
+		self.assertEqual(cstr(result.get("resolved_conversation")), conversation.name)
+		self.assertEqual(cstr(conversation.delivery_mode), "Private Channel")
+
+	def test_raven_message_action_resolves_whatsapp_linked_message(self):
+		allowed_raven = self._raven_user_for(self.PRIVATE_ALLOWED_USER)
+		route = self._create_route("action-link-msg", conversation_strategy="Thread Per Contact")
+		phone = "+447733119910"
+		incoming = self._insert_incoming_thread_message(
+			phone=phone,
+			message_id="wamid.warc4c.action.link.001",
+			body="warc4c action linked message",
+		)
+		conversation = frappe.get_doc(
+			"WhatsApp Raven Conversation",
+			frappe.db.get_value(
+				"WhatsApp Raven Conversation",
+				{"phone_number": normalize_phone_number(phone), "whatsapp_account": self.ACCOUNT_NAME},
+				"name",
+			),
+		)
+		link_name = frappe.db.get_value("WhatsApp Raven Message Link", {"whatsapp_message": incoming.name}, "name")
+		self.assertTrue(link_name)
+		raven_message = cstr(frappe.db.get_value("WhatsApp Raven Message Link", link_name, "raven_message") or "").strip()
+		self.assertTrue(raven_message)
+
+		result = move_message_conversation_to_private_channel(
+			raven_message=raven_message,
+			raven_users=[allowed_raven],
+			channel_name="warc4c-action-link-msg",
+		)
+		conversation.reload()
+		self.assertEqual(cstr(result.get("resolved_conversation")), conversation.name)
+		self.assertEqual(cstr(conversation.delivery_mode), "Private Channel")
+
+	def test_raven_message_action_unrelated_message_fails_safely(self):
+		ensure_raven_message_actions()
+		channel = frappe.get_doc(
+			{
+				"doctype": "Raven Channel",
+				"channel_name": "warc4c-action-unrelated",
+				"workspace": self.WORKSPACE,
+				"type": "Private",
+			}
+		).insert(ignore_permissions=True)
+		raven_message = frappe.get_doc(
+			{
+				"doctype": "Raven Message",
+				"channel_id": channel.name,
+				"message_type": "Text",
+				"text": "<p>warc4c unrelated</p>",
+				"is_bot_message": 1,
+			}
+		).insert(ignore_permissions=True)
+		with self.assertRaises(frappe.ValidationError):
+			move_message_conversation_to_private_channel(
+				raven_message=raven_message.name,
+				raven_users=["Administrator"],
+			)
+
+	def test_raven_message_action_permission_denied(self):
+		route = self._create_route("action-perm", conversation_strategy="Thread Per Contact")
+		conversation = self._make_conversation(route, "+447733119911")
+		current_user = frappe.session.user
+		try:
+			frappe.set_user(self.NON_MANAGER_USER)
+			with self.assertRaises(frappe.PermissionError):
+				move_message_conversation_to_private_channel(
+					raven_message=conversation.parent_raven_message,
+					raven_users=["Administrator"],
+				)
+			frappe.set_user("Guest")
+			with self.assertRaises(frappe.PermissionError):
+				move_message_conversation_to_private_channel(
+					raven_message=conversation.parent_raven_message,
+					raven_users=["Administrator"],
+				)
+		finally:
+			frappe.set_user(current_user)
+
 	@classmethod
 	def _snapshot_settings(cls):
 		settings = frappe.get_single("WhatsApp Raven Bridge Settings")
@@ -899,6 +1050,14 @@ class TestAccountRouteDesign(IntegrationTestCase):
 			user_doc.save(ignore_permissions=True)
 
 	def _cleanup(self):
+		for name in frappe.get_all(
+			"Raven Message Action",
+			filters={"custom_function_path": ACTION_FUNCTION_PATH},
+			pluck="name",
+		):
+			if frappe.db.exists("Raven Message Action", name):
+				frappe.delete_doc("Raven Message Action", name, force=True)
+
 		conversation_rows = frappe.get_all(
 			"WhatsApp Raven Conversation",
 			filters=[["phone_number", "like", "44773311%"]],

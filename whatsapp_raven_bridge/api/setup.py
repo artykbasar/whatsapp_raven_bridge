@@ -376,16 +376,27 @@ def bootstrap_whatsapp_raven_bridge(
 	if not bot.raven_user:
 		frappe.throw(_("Raven Bot {0} does not have a linked Raven User.").format(bot.name))
 
-	settings.enabled = 1
-	settings.bridge_system_user = system_user_name
-	settings.bridge_raven_bot = bot.name
-	settings.bridge_raven_user = bot.raven_user
-	settings.default_raven_workspace = workspace.name
-	settings.default_channel_type = channel_type
-	settings.conversation_strategy = conversation_strategy
-	settings.enable_outbound_replies = cint(enable_outbound_replies)
-	settings.enable_start_conversation = cint(enable_start_conversation)
-	settings.save(ignore_permissions=True)
+	settings_updates = {
+		"enabled": 1,
+		"bridge_system_user": system_user_name,
+		"bridge_raven_bot": bot.name,
+		"bridge_raven_user": bot.raven_user,
+		"default_raven_workspace": workspace.name,
+		"default_channel_type": channel_type,
+		"conversation_strategy": conversation_strategy,
+		"enable_outbound_replies": cint(enable_outbound_replies),
+		"enable_start_conversation": cint(enable_start_conversation),
+	}
+	for attempt in range(2):
+		try:
+			for key, value in settings_updates.items():
+				settings.set(key, value)
+			settings.save(ignore_permissions=True)
+			break
+		except frappe.TimestampMismatchError:
+			if attempt >= 1:
+				raise
+			settings.reload()
 	summary.settings_updated = True
 	summary.bridge_system_user = system_user_name
 

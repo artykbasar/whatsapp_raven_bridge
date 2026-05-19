@@ -91,6 +91,7 @@ doctype_js = {
 
 # before_install = "whatsapp_raven_bridge.install.before_install"
 after_install = "whatsapp_raven_bridge.install.after_install"
+after_migrate = ["whatsapp_raven_bridge.install.after_migrate"]
 
 # Uninstallation
 # ------------
