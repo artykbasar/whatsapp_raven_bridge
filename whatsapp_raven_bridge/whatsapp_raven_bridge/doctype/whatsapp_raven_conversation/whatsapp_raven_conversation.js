@@ -4,8 +4,8 @@ frappe.ui.form.on("WhatsApp Raven Conversation", {
 			return;
 		}
 
-		frm.add_custom_button(__("Move to Private Channel"), () => {
-			openMoveToPrivateDialog(frm);
+		frm.add_custom_button(__("Move to Private Channel"), async () => {
+			await openMoveToPrivateDialog(frm);
 		});
 
 		frm.add_custom_button(__("Check Private Channel State"), () => {
@@ -30,7 +30,29 @@ function isConversationAdmin() {
 	return frappe.session.user === "Administrator" || frappe.user_roles.includes("System Manager");
 }
 
-function openMoveToPrivateDialog(frm) {
+async function openMoveToPrivateDialog(frm) {
+	const existing = (frm.doc.private_members || []).map((row) => row.raven_user).filter(Boolean);
+	let ravenUserOptions = [];
+	try {
+		ravenUserOptions = await fetchActiveRavenUsers(existing);
+	} catch (error) {
+		frappe.msgprint({
+			title: __("Could not Load Raven Users"),
+			message: __("Please check Raven User setup and try again."),
+			indicator: "red",
+		});
+		return;
+	}
+
+	if (!ravenUserOptions.length) {
+		frappe.msgprint({
+			title: __("No Active Raven Users"),
+			message: __("No enabled Raven User records were found."),
+			indicator: "orange",
+		});
+		return;
+	}
+
 	const d = new frappe.ui.Dialog({
 		title: __("Move to Private Channel"),
 		fields: [
@@ -42,19 +64,27 @@ function openMoveToPrivateDialog(frm) {
 			},
 			{
 				fieldname: "raven_users",
-				fieldtype: "Small Text",
+				fieldtype: "MultiCheck",
 				label: __("Raven Users"),
-				description: __("Comma-separated Raven User IDs or User IDs (email/login)."),
+				description: __("Select Raven users who should access and reply in the private channel."),
 				reqd: 1,
+				options: ravenUserOptions,
 			},
 		],
 		primary_action_label: __("Move"),
 		primary_action(values) {
+			const selectedUsers = Array.isArray(values.raven_users)
+				? values.raven_users.filter(Boolean)
+				: [];
+			if (!selectedUsers.length) {
+				frappe.msgprint(__("Please select at least one Raven User."));
+				return;
+			}
 			frappe.call({
 				method: "whatsapp_raven_bridge.api.conversation.move_to_private_channel",
 				args: {
 					conversation: frm.doc.name,
-					raven_users: values.raven_users,
+					raven_users: selectedUsers,
 					channel_name: values.channel_name,
 				},
 				callback: (r) => {
@@ -62,21 +92,34 @@ function openMoveToPrivateDialog(frm) {
 					frm.reload_doc();
 					const data = r.message || {};
 					frappe.show_alert({
-						message: __("Moved to private channel: {0}", [data.private_channel || ""]),
+						message: __("Moved to private channel: {0}", [data.private_channel_name || data.private_channel || ""]),
 						indicator: "green",
 					});
+					if (data.private_channel_url) {
+						frappe.msgprint({
+							title: __("Conversation Moved"),
+							message: __(
+								"Open the private channel from the Raven sidebar. Channel URL: {0}",
+								[data.private_channel_url]
+							),
+						});
+					}
 				},
 			});
 		},
 	});
-
-	const existing = (frm.doc.private_members || [])
-		.map((row) => row.raven_user)
-		.filter(Boolean)
-		.join(", ");
-	if (existing) {
-		d.set_value("raven_users", existing);
-	}
 	d.show();
 }
 
+async function fetchActiveRavenUsers(existing = []) {
+	const response = await frappe.call({
+		method: "whatsapp_raven_bridge.api.conversation.list_active_raven_users",
+	});
+	const rows = response.message || [];
+	const selected = new Set(existing || []);
+	return rows.map((row) => ({
+		label: row.label || row.value,
+		value: row.value,
+		checked: selected.has(row.value),
+	}));
+}

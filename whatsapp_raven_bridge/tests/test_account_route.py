@@ -1,4 +1,5 @@
 from __future__ import annotations
+from urllib.parse import quote
 
 import frappe
 from frappe.tests import IntegrationTestCase
@@ -6,6 +7,7 @@ from frappe.utils import cint, cstr
 from frappe.utils.password import set_encrypted_password
 
 from whatsapp_raven_bridge.api.conversation import (
+	list_active_raven_users,
 	move_message_conversation_to_private_channel,
 	move_to_private_channel,
 )
@@ -479,6 +481,12 @@ class TestAccountRouteDesign(IntegrationTestCase):
 		self.assertEqual(result.get("conversation"), conversation.name)
 		self.assertEqual(cstr(conversation.delivery_mode), "Private Channel")
 		self.assertEqual(cstr(conversation.raven_channel), channel_before)
+		self.assertEqual(cstr(result.get("workspace")), cstr(route.raven_workspace))
+		self.assertEqual(
+			cstr(result.get("private_channel_url")),
+			f"/raven/{quote(route.raven_workspace, safe='')}/{quote(conversation.raven_channel, safe='')}",
+		)
+		self.assertIn("private channel", cstr(result.get("message")).lower())
 		self.assertEqual(int(channel_doc.is_thread or 0), 0)
 		self.assertEqual(cstr(channel_doc.type), "Private")
 		self.assertEqual(cstr(channel_doc.channel_name), "warc4c-private-escalation")
@@ -493,6 +501,57 @@ class TestAccountRouteDesign(IntegrationTestCase):
 		self.assertGreaterEqual(
 			frappe.db.count("Raven Message", {"channel_id": conversation.raven_channel}),
 			0,
+		)
+		actor_raven = self._raven_user_for("Administrator")
+		self.assertEqual(cstr(result.get("actor_raven_user")), actor_raven)
+		self.assertTrue(
+			frappe.db.exists(
+				"Raven Channel Member",
+				{"channel_id": conversation.raven_channel, "user_id": actor_raven},
+			)
+		)
+
+	def test_private_channel_move_accepts_list_json_and_comma_raven_users(self):
+		allowed_raven = self._raven_user_for(self.PRIVATE_ALLOWED_USER)
+		denied_raven = self._raven_user_for(self.PRIVATE_DENIED_USER)
+		route = self._create_route("private-user-parser", conversation_strategy="Thread Per Contact")
+
+		conversation_list = self._make_conversation(route, "+447733119921")
+		move_to_private_channel(conversation=conversation_list.name, raven_users=[allowed_raven], channel_name="warc4c-parse-list")
+		conversation_list.reload()
+		self.assertTrue(
+			frappe.db.exists(
+				"WhatsApp Raven Conversation Private Member",
+				{"parent": conversation_list.name, "raven_user": allowed_raven},
+			)
+		)
+
+		conversation_json = self._make_conversation(route, "+447733119922")
+		move_to_private_channel(
+			conversation=conversation_json.name,
+			raven_users=f'["{allowed_raven}","{denied_raven}"]',
+			channel_name="warc4c-parse-json",
+		)
+		conversation_json.reload()
+		self.assertTrue(
+			frappe.db.exists(
+				"WhatsApp Raven Conversation Private Member",
+				{"parent": conversation_json.name, "raven_user": denied_raven},
+			)
+		)
+
+		conversation_csv = self._make_conversation(route, "+447733119923")
+		move_to_private_channel(
+			conversation=conversation_csv.name,
+			raven_users=f"{allowed_raven}, {self.PRIVATE_DENIED_USER}",
+			channel_name="warc4c-parse-csv",
+		)
+		conversation_csv.reload()
+		self.assertTrue(
+			frappe.db.exists(
+				"WhatsApp Raven Conversation Private Member",
+				{"parent": conversation_csv.name, "raven_user": denied_raven},
+			)
 		)
 
 	def test_private_channel_move_membership_and_outbound_permissions(self):
@@ -697,7 +756,17 @@ class TestAccountRouteDesign(IntegrationTestCase):
 		self.assertEqual(cstr(fields["raven_message"].default_value), "name")
 		self.assertEqual(cstr(fields["channel_id"].default_value_type), "Message Field")
 		self.assertEqual(cstr(fields["channel_id"].default_value), "channel_id")
-		self.assertEqual(cint(fields["raven_users"].is_required), 1)
+		self.assertEqual(cstr(fields["raven_users"].type), "Small Text")
+		self.assertEqual(cint(fields["raven_users"].is_required), 0)
+		self.assertIn("optional", cstr(fields["raven_users"].helper_text).lower())
+
+	def test_list_active_raven_users_returns_enabled_rows(self):
+		rows = list_active_raven_users()
+		self.assertTrue(rows)
+		by_value = {cstr(row.get("value")): row for row in rows}
+		admin_raven = self._raven_user_for("Administrator")
+		self.assertIn(admin_raven, by_value)
+		self.assertIn("label", by_value[admin_raven])
 
 	def test_raven_message_action_resolves_parent_starter(self):
 		allowed_raven = self._raven_user_for(self.PRIVATE_ALLOWED_USER)

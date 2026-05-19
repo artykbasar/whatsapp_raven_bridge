@@ -87,13 +87,15 @@ Administrators and System Managers can move one `WhatsApp Raven Conversation` fr
 Entry points:
 
 1. Raven message action:
-   - Open message actions on a WhatsApp parent starter or any message in that conversation.
+   - Right-click a WhatsApp parent starter or any message in that conversation.
+   - Open **Actions**.
    - Choose **Move WhatsApp Conversation to Private Channel**.
 2. Desk action:
    - Open **WhatsApp Raven Conversation**.
    - Click **Move to Private Channel**.
 
-Both paths prompt for selected Raven users and optional private channel display name.
+- Raven action fields are limited by current Raven action UI controls. `Raven Users` accepts optional comma-separated / JSON list input.
+- Desk action is the recommended flow for member selection (checkbox multi-select of active Raven users) plus optional private channel display name.
 
 Result:
 
@@ -101,6 +103,7 @@ Result:
 - Future inbound WhatsApp messages route to that private channel.
 - Outbound replies are allowed only for selected private members (plus Administrator/System Manager override).
 - Shared inbox route thread stops receiving future messages for that conversation.
+- The old `/thread/...` route becomes invalid after conversion. Open the private channel from the Raven sidebar.
 
 Notes:
 

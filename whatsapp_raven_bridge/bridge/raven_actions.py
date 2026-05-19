@@ -10,7 +10,10 @@ ACTION_TITLE = "Move WhatsApp Conversation to Private Channel"
 ACTION_DESCRIPTION = (
 	"Choose Raven users who should access this WhatsApp conversation as a private channel."
 )
-ACTION_SUCCESS_MESSAGE = "WhatsApp conversation moved to private channel."
+ACTION_SUCCESS_MESSAGE = (
+	"WhatsApp conversation moved to private channel. "
+	"Open the channel from the Raven sidebar (the old thread route is no longer active)."
+)
 ACTION_FUNCTION_PATH = "whatsapp_raven_bridge.api.conversation.move_message_conversation_to_private_channel"
 
 
@@ -85,8 +88,11 @@ def _build_action_fields() -> list[dict]:
 			"fieldname": "raven_users",
 			"label": "Raven Users",
 			"type": "Small Text",
-			"is_required": 1,
-			"helper_text": "Comma-separated Raven User IDs or linked User emails/logins.",
+			"is_required": 0,
+			"helper_text": (
+				"Optional. Comma-separated Raven User IDs/User IDs, or JSON list. "
+				"If empty, route defaults + actor + Administrator are used."
+			),
 		},
 		{
 			"fieldname": "channel_name",

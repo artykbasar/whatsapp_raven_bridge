@@ -110,7 +110,11 @@ Bootstrap does not configure Meta webhook URLs, WhatsApp tokens, or template app
 - Bridge System User audit context for bridge-created infrastructure
 - Admin-only private channel escalation per conversation (shared thread -> dedicated private channel)
   - Raven Action: `Move WhatsApp Conversation to Private Channel`
+    - Open from Raven message context menu: right-click message -> Actions
+    - `Raven Users` action input accepts optional comma-separated or JSON list
+    - After conversion the old thread route is no longer valid; open the private channel from the Raven sidebar
   - Desk action on `WhatsApp Raven Conversation`: `Move to Private Channel`
+    - Recommended for user selection UX (checkbox multi-select of active Raven users)
 
 ## Current Limitations
 

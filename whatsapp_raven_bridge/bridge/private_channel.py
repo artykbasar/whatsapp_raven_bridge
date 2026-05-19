@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import quote
 
 import frappe
 from frappe import _
@@ -65,6 +66,7 @@ def move_conversation_to_private_channel(
 	target_channel_name = _resolve_private_channel_name(conversation_doc, channel_name)
 	bridge_raven_user = cstr((get_settings() or {}).get("bridge_raven_user") or "").strip()
 	admin_raven_user = cstr(frappe.db.get_value("Raven User", {"user": "Administrator", "enabled": 1}, "name") or "").strip()
+	actor_raven_user = _resolve_raven_user(actor, throw=False)
 
 	already_private = (
 		cstr(conversation_doc.get("delivery_mode") or DELIVERY_MODE_ROUTE_THREAD) == DELIVERY_MODE_PRIVATE_CHANNEL
@@ -114,6 +116,8 @@ def move_conversation_to_private_channel(
 		keep_users.add(admin_raven_user)
 	if bridge_raven_user:
 		keep_users.add(bridge_raven_user)
+	if actor_raven_user:
+		keep_users.add(actor_raven_user)
 
 	_ensure_private_memberships(
 		channel_doc=channel_doc,
@@ -144,16 +148,23 @@ def move_conversation_to_private_channel(
 	conversation_doc.private_channel_members_summary = summary_text
 	conversation_doc.save(ignore_permissions=True)
 
+	workspace_id = cstr(channel_doc.workspace or route_doc.raven_workspace or conversation_doc.raven_workspace or "").strip()
+	private_channel_url = _build_private_channel_url(workspace_id=workspace_id, channel_id=channel_doc.name)
+
 	return frappe._dict(
 		{
 			"conversation": conversation_doc.name,
 			"delivery_mode": conversation_doc.delivery_mode,
 			"private_channel": channel_doc.name,
 			"private_channel_name": target_channel_name,
+			"workspace": workspace_id,
+			"private_channel_url": private_channel_url,
+			"message": _("Conversation moved to private channel. Open the private channel from Raven sidebar."),
 			"previous_parent_raven_message": conversation_doc.previous_parent_raven_message,
 			"previous_route_inbox_channel": conversation_doc.previous_route_inbox_channel,
 			"previous_route_thread_channel": conversation_doc.previous_route_thread_channel,
 			"selected_members": [row.get("raven_user") for row in private_member_rows],
+			"actor_raven_user": actor_raven_user,
 		}
 	)
 
@@ -291,6 +302,7 @@ def _resolve_selected_private_members(raven_users, *, route_doc, actor: str) -> 
 
 	admin_raven_user = cstr(frappe.db.get_value("Raven User", {"user": "Administrator", "enabled": 1}, "name") or "").strip()
 	if admin_raven_user and admin_raven_user not in seen:
+		seen.add(admin_raven_user)
 		resolved.append(admin_raven_user)
 
 	if not resolved:
@@ -310,6 +322,14 @@ def _resolve_private_channel_name(conversation_doc, channel_name: str | None) ->
 		or "Contact"
 	)
 	return f"WhatsApp - {label}"[:140]
+
+
+def _build_private_channel_url(*, workspace_id: str, channel_id: str) -> str | None:
+	workspace = cstr(workspace_id or "").strip()
+	channel = cstr(channel_id or "").strip()
+	if not workspace or not channel:
+		return None
+	return f"/raven/{quote(workspace, safe='')}/{quote(channel, safe='')}"
 
 
 def _build_private_member_rows(selected_members: list[str], *, route_doc, admin_raven_user: str) -> list[dict[str, Any]]:

@@ -6,7 +6,7 @@ from typing import Any
 
 import frappe
 from frappe import _
-from frappe.utils import cstr
+from frappe.utils import cint, cstr
 
 from whatsapp_raven_bridge.bridge.private_channel import (
 	get_private_channel_state as get_private_channel_state_internal,
@@ -82,6 +82,35 @@ def move_message_conversation_to_private_channel(
 	result = dict(result)
 	result["resolved_conversation"] = conversation_name
 	result["raven_message"] = message_name
+	return result
+
+
+@frappe.whitelist()
+def list_active_raven_users(limit: int = 500) -> list[dict[str, Any]]:
+	"""List active Raven Users for admin selection controls."""
+	_require_conversation_admin_permission()
+	max_rows = min(max(cint(limit), 1), 2000)
+	rows = frappe.get_all(
+		"Raven User",
+		filters={"enabled": 1},
+		fields=["name", "user", "full_name", "first_name"],
+		order_by="modified desc",
+		limit_page_length=max_rows,
+	)
+	result = []
+	for row in rows:
+		raven_user = cstr(row.get("name") or "").strip()
+		if not raven_user:
+			continue
+		user_id = cstr(row.get("user") or "").strip()
+		name_label = (
+			cstr(row.get("full_name") or "").strip()
+			or cstr(row.get("first_name") or "").strip()
+			or user_id
+			or raven_user
+		)
+		label = name_label if not user_id else f"{name_label} ({user_id})"
+		result.append({"value": raven_user, "label": label, "user": user_id})
 	return result
 
 
