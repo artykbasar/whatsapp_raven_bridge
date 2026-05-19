@@ -6,8 +6,8 @@ from frappe.utils import cstr
 
 from whatsapp_raven_bridge.dev_seed import (
 	DEMO_EXPERIMENT_LABELS,
-	DEMO_INBOX_CHANNEL_FALLBACK,
 	DEMO_TOPICS,
+	_get_demo_inbox_channels,
 	_delete_demo_seed_data,
 	create_demo_whatsapp_raven_data,
 )
@@ -69,10 +69,13 @@ class TestDemoSeedCleanup(IntegrationTestCase):
 			self.assertIn("<code>+", text)
 
 	def _insert_legacy_demo_parent(self, text: str):
+		inbox_channels = sorted(_get_demo_inbox_channels())
+		if not inbox_channels:
+			return
 		frappe.get_doc(
 			{
 				"doctype": "Raven Message",
-				"channel_id": DEMO_INBOX_CHANNEL_FALLBACK,
+				"channel_id": inbox_channels[0],
 				"message_type": "Text",
 				"is_thread": 1,
 				"is_bot_message": 1,
@@ -83,12 +86,16 @@ class TestDemoSeedCleanup(IntegrationTestCase):
 		).insert(ignore_permissions=True)
 
 	def _get_inbox_demo_parent_rows(self) -> list[frappe._dict]:
-		rows = frappe.get_all(
-			"Raven Message",
-			filters={"channel_id": DEMO_INBOX_CHANNEL_FALLBACK},
-			fields=["name", "text"],
-			order_by="creation asc",
-		)
+		rows = []
+		for channel_id in sorted(_get_demo_inbox_channels()):
+			rows.extend(
+				frappe.get_all(
+					"Raven Message",
+					filters={"channel_id": channel_id},
+					fields=["name", "text"],
+					order_by="creation asc",
+				)
+			)
 		tokens = [f"Demo {topic}" for topic in DEMO_TOPICS]
 		return [row for row in rows if any(token in cstr(row.get("text") or "") for token in tokens)]
 
