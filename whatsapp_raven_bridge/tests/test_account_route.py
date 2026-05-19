@@ -761,6 +761,17 @@ class TestAccountRouteDesign(IntegrationTestCase):
 		self.assertEqual(cint(fields["raven_users"].is_required), 0)
 		self.assertIn("optional", cstr(fields["raven_users"].helper_text).lower())
 
+	def test_test_cleanup_preserves_raven_message_action(self):
+		ensure_raven_message_actions()
+		action_name = frappe.db.get_value(
+			"Raven Message Action",
+			{"custom_function_path": ACTION_FUNCTION_PATH},
+			"name",
+		)
+		self.assertTrue(action_name)
+		self._cleanup()
+		self.assertTrue(frappe.db.exists("Raven Message Action", action_name))
+
 	def test_list_active_raven_users_returns_enabled_rows(self):
 		rows = list_active_raven_users()
 		self.assertTrue(rows)
@@ -1188,14 +1199,6 @@ class TestAccountRouteDesign(IntegrationTestCase):
 			user_doc.save(ignore_permissions=True)
 
 	def _cleanup(self):
-		for name in frappe.get_all(
-			"Raven Message Action",
-			filters={"custom_function_path": ACTION_FUNCTION_PATH},
-			pluck="name",
-		):
-			if frappe.db.exists("Raven Message Action", name):
-				frappe.delete_doc("Raven Message Action", name, force=True)
-
 		conversation_rows = frappe.get_all(
 			"WhatsApp Raven Conversation",
 			filters=[["phone_number", "like", "44773311%"]],
